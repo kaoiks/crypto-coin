@@ -1,0 +1,23 @@
+{
+  "name": "p2p-wallet",
+  "version": "1.0.0",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "dev": "ts-node src/main.ts",
+    "watch": "nodemon --watch 'src/**/*.ts' --exec 'ts-node' src/main.ts",
+    "start:port": "node dist/main.js"
+  },
+  "dependencies": {
+    "@types/ws": "^8.5.12",
+    "events": "^3.3.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "nodemon": "^3.0.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
