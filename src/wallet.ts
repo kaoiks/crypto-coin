@@ -22,30 +22,11 @@ export class DigitalWallet {
         this.eventListeners = new Map();
     }
 
-    // public createNewIdentity(name: string = ''): string {
-    //     this.currentIdentity = this.identityStore.createNewIdentity(name);
-
-    //     this.storeCurrentIdentity(name);
-    //     return this.currentIdentity.getPublicKey();
-    // }
-
     public createNewIdentity(name: string = ''): void {
         this.identityStore.createNewIdentity(name);
     }
     public listIdentities(): StoredIdentity[] {
         return this.identityStore.getAllIdentities();
-    }
-
-    public addEventListener(event: string, callback: Function) {
-        if (!this.eventListeners.has(event)) {
-            this.eventListeners.set(event, []);
-        }
-        this.eventListeners.get(event)?.push(callback);
-    }
-
-    private emitEvent(event: string, data: any) {
-        const listeners = this.eventListeners.get(event) || [];
-        listeners.forEach(callback => callback(data));
     }
 
     public getWalletId(): string {

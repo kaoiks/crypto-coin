@@ -16,6 +16,8 @@ export class IdentityStore {
         this.loadIdentities();
     }
 
+    //decrytping and loading identities from secure store
+    //when no idienties exists, creates an indentity
     private loadIdentities(): void {
         try {
             if (fs.existsSync(this.storePath)) {
@@ -35,7 +37,7 @@ export class IdentityStore {
         }
     }
 
-    
+    //encrypts and saves indentity into store
     private saveIdentities(): void {
         try {
             const identitiesArray = Array.from(this.identities.values());
@@ -56,6 +58,8 @@ export class IdentityStore {
         return this.identities.get(id);
     }
 
+
+    //creates an identity, that posseses: an id, a public &private key pair and name
     public createNewIdentity(name: string): StoredIdentity {
         let keyPair = createKeyPair();
 

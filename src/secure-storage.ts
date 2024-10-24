@@ -11,11 +11,12 @@ export class SecureStorage {
         this.password = password;
     }
 
+    //puts identity instance in a json format and encrypts json contents
     public encryptIdentity(identity: StoredIdentity): string {
         const data = JSON.stringify(identity);
         return encrypt(data, this.password);
     }
-
+    // decyrpts secured identity and parses it to json
     public decryptIdentity(encryptedData: string): StoredIdentity {
         const decrypted = decrypt(encryptedData, this.password);
         let data = JSON.parse(decrypted);
