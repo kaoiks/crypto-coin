@@ -1,12 +1,19 @@
+// node.ts
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 import { PeerMessage } from './types';
 
+interface PeerInfo {
+    socket: WebSocket;
+    address: string;
+}
+
 export class P2PNode extends EventEmitter {
     private id: string;
     private server: WebSocket.Server | null;
-    private peers: Map<string, WebSocket>;
+    private peers: Map<string, PeerInfo>;
     private isActive: boolean;
+    private port: number;
 
     constructor(nodeId: string) {
         super();
@@ -14,6 +21,7 @@ export class P2PNode extends EventEmitter {
         this.server = null;
         this.peers = new Map();
         this.isActive = false;
+        this.port = 0;
     }
 
     public async start(port: number): Promise<void> {
@@ -22,11 +30,15 @@ export class P2PNode extends EventEmitter {
         }
 
         try {
+            this.port = port;
             this.server = new WebSocket.Server({ port });
             
-            this.server.on('connection', (socket: WebSocket) => {
-                this.handleConnection(socket);
+            this.server.on('connection', (socket: WebSocket, request) => {
+                // Normalize the remote address
+                const clientAddress = this.normalizeAddress(request.socket.remoteAddress, request.socket.remotePort);
+                this.handleConnection(socket, clientAddress);
             });
+            
             this.isActive = true;
             this.emit('started', { nodeId: this.id, port });
             console.log(`P2P server started on port ${port}`);
@@ -36,16 +48,40 @@ export class P2PNode extends EventEmitter {
         }
     }
 
-    // Handle initial connection
-    private handleConnection(socket: WebSocket) {
+    private normalizeAddress(address: string | undefined, port: number | undefined): string {
+        if (!address || !port) {
+            return `ws://localhost:${this.port}`;
+        }
+
+        // Handle IPv6 localhost
+        if (address === '::1' || address === '::ffff:127.0.0.1') {
+            return `ws://localhost:${port}`;
+        }
+
+        // Handle IPv4 localhost
+        if (address === '127.0.0.1') {
+            return `ws://localhost:${port}`;
+        }
+
+        // Handle IPv6 addresses
+        if (address.includes(':')) {
+            return `ws://[${address}]:${port}`;
+        }
+
+        // Handle regular IPv4 addresses
+        return `ws://${address}:${port}`;
+    }
+
+    private handleConnection(socket: WebSocket, address: string) {
         socket.on('message', (data: WebSocket.RawData) => {
             try {
                 const message = JSON.parse(data.toString());
                 if (message.type === 'HANDSHAKE') {
                     const peerId = message.payload.nodeId;
-                    this.peers.set(peerId, socket);
-                    this.emit('peerConnected', { peerId });
-                    console.log(`Peer connected: ${peerId}`);
+                    const peerAddress = message.payload.address || address;
+                    this.peers.set(peerId, { socket, address: peerAddress });
+                    this.emit('peerConnected', { peerId, address: peerAddress });
+                    console.log(`Peer ${peerId} connected from ${peerAddress}`);
                 } else {
                     this.emit('message', message);
                 }
@@ -55,31 +91,42 @@ export class P2PNode extends EventEmitter {
         });
 
         socket.on('close', () => {
-            this.peers.forEach((ws, peerId) => {
-                if (ws === socket) {
+            this.peers.forEach((peerInfo, peerId) => {
+                if (peerInfo.socket === socket) {
                     this.peers.delete(peerId);
                     this.emit('peerDisconnected', { peerId });
-                    console.log(`Peer disconnected: ${peerId}`);
+                    console.log(`Peer ${peerId} disconnected`);
                 }
             });
         });
 
+        // Send handshake with our local address
         const handshake = {
             type: 'HANDSHAKE',
-            payload: { nodeId: this.id },
+            payload: { 
+                nodeId: this.id,
+                address: `ws://localhost:${this.port}`
+            },
             sender: this.id,
             timestamp: Date.now()
         };
         socket.send(JSON.stringify(handshake));
     }
     
-    // Connect to a peer
     public async connectToPeer(peerAddress: string): Promise<void> {
+        // Don't connect if we already have a connection to this address
+        const existingPeer = Array.from(this.peers.values()).find(peer => peer.address === peerAddress);
+        if (existingPeer) {
+            console.log(`Already connected to peer at ${peerAddress}`);
+            return;
+        }
+
         try {
+            console.log(`Attempting to connect to peer at ${peerAddress}`);
             const socket = new WebSocket(peerAddress);
             
             socket.on('open', () => {
-                this.handleConnection(socket);
+                this.handleConnection(socket, peerAddress);
             });
 
             socket.on('error', (error) => {
@@ -88,12 +135,13 @@ export class P2PNode extends EventEmitter {
             });
 
         } catch (error) {
+            console.error(`Error connecting to peer ${peerAddress}:`, error);
             this.emit('error', error);
             throw error;
         }
     }
 
-    // Broadcast a message to all connected peers
+    // Rest of the methods remain the same...
     public broadcastMessage(message: PeerMessage): void {
         if (!this.isActive) {
             throw new Error('Node is not active');
@@ -105,7 +153,7 @@ export class P2PNode extends EventEmitter {
             timestamp: Date.now()
         });
 
-        this.peers.forEach((socket, peerId) => {
+        this.peers.forEach(({ socket }, peerId) => {
             try {
                 if (socket.readyState === WebSocket.OPEN) {
                     socket.send(messageString);
@@ -117,10 +165,9 @@ export class P2PNode extends EventEmitter {
         });
     }
 
-    // Stop the node
     public stop(): void {
         this.isActive = false;
-        this.peers.forEach((socket, peerId) => {
+        this.peers.forEach(({ socket }, peerId) => {
             socket.close();
             console.log(`Disconnecting from peer ${peerId}`);
         });
@@ -134,8 +181,14 @@ export class P2PNode extends EventEmitter {
         this.emit('stopped', { nodeId: this.id });
     }
 
-    // Get a list of connected peers
     public getPeers(): string[] {
         return Array.from(this.peers.keys());
+    }
+
+    public getPeersWithAddresses(): Array<{ id: string, address: string }> {
+        return Array.from(this.peers.entries()).map(([id, info]) => ({
+            id,
+            address: info.address
+        }));
     }
 }

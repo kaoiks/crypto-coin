@@ -12,13 +12,27 @@ export class NetworkManager {
         this.setupEventListeners();
     }
 
-    // Set up event listeners for the P2P node
     private setupEventListeners(): void {
         this.node.on('message', (message: PeerMessage) => {
+            if (message.type === 'PEER_DISCOVERY') {
+                this.handlePeerDiscovery(message);
+            }
         });
 
-        this.node.on('peerConnected', ({ peerId }) => {
+        this.node.on('peerConnected', async ({ peerId, address }) => {
             console.log(`Connected to peer: ${peerId}`);
+            
+            // Broadcast our existing peers to the new peer
+            const peers = this.node.getPeersWithAddresses();
+            if (peers.length > 0) {
+                this.node.broadcastMessage({
+                    type: 'PEER_DISCOVERY',
+                    payload: { peers },
+                    sender: this.wallet.getWalletId(),
+                    timestamp: Date.now()
+                });
+            }
+            
             console.log('Current peers:', this.node.getPeers());
         });
 
@@ -28,7 +42,26 @@ export class NetworkManager {
         });
     }
 
-    // Broadcast a transaction to all connected peers
+    private async handlePeerDiscovery(message: PeerMessage): Promise<void> {
+        const { peers } = message.payload;
+        
+        // Filter out peers we're already connected to
+        const currentPeers = new Set(this.node.getPeers());
+        const newPeers = peers.filter((peer: { id: string, address: string }) => 
+            peer.id !== this.wallet.getWalletId() && !currentPeers.has(peer.id)
+        );
+
+        // Connect to new peers
+        for (const peer of newPeers) {
+            try {
+                await this.node.connectToPeer(peer.address);
+                console.log(`Connected to discovered peer: ${peer.id} at ${peer.address}`);
+            } catch (error) {
+                console.error(`Failed to connect to discovered peer ${peer.id}:`, error);
+            }
+        }
+    }
+
     public async start(port: number): Promise<void> {
         await this.node.start(port);
     }
