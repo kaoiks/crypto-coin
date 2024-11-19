@@ -1,80 +1,115 @@
+// network-manager.ts
 import { DigitalWallet, WalletEvent } from './wallet';
 import { P2PNode } from './node';
 import { PeerMessage } from './types';
+import WebSocket from 'ws';
 
 export class NetworkManager {
     private wallet: DigitalWallet;
-    private node: P2PNode;
+    private socket: WebSocket | null = null;
+    private currentNodeAddress: string | null = null;
 
     constructor(wallet: DigitalWallet) {
         this.wallet = wallet;
-        this.node = new P2PNode(wallet.getWalletId());
-        this.setupEventListeners();
     }
 
-    private setupEventListeners(): void {
-        this.node.on('message', (message: PeerMessage) => {
-            if (message.type === 'PEER_DISCOVERY') {
-                this.handlePeerDiscovery(message);
+    public async connectToNode(nodeAddress: string): Promise<void> {
+        try {
+            if (this.socket) {
+                this.socket.close();
+                this.socket = null;
             }
-        });
 
-        this.node.on('peerConnected', async ({ peerId, address }) => {
-            console.log(`Connected to peer: ${peerId}`);
+            this.socket = new WebSocket(nodeAddress);
             
-            // Broadcast our existing peers to the new peer
-            const peers = this.node.getPeersWithAddresses();
-            if (peers.length > 0) {
-                this.node.broadcastMessage({
-                    type: 'PEER_DISCOVERY',
-                    payload: { peers },
-                    sender: this.wallet.getWalletId(),
-                    timestamp: Date.now()
+            return new Promise((resolve, reject) => {
+                if (!this.socket) {
+                    reject(new Error('Socket not initialized'));
+                    return;
+                }
+
+                this.socket.on('open', () => {
+                    this.currentNodeAddress = nodeAddress;
+                    this.setupConnection();
+                    resolve();
                 });
-            }
-            
-            console.log('Current peers:', this.node.getPeers());
-        });
 
-        this.node.on('peerDisconnected', ({ peerId }) => {
-            console.log(`Disconnected from peer: ${peerId}`);
-            console.log('Current peers:', this.node.getPeers());
-        });
-    }
+                this.socket.on('error', () => {
+                    reject(new Error(`Failed to connect to node at ${nodeAddress}`));
+                });
 
-    private async handlePeerDiscovery(message: PeerMessage): Promise<void> {
-        const { peers } = message.payload;
-        
-        // Filter out peers we're already connected to
-        const currentPeers = new Set(this.node.getPeers());
-        const newPeers = peers.filter((peer: { id: string, address: string }) => 
-            peer.id !== this.wallet.getWalletId() && !currentPeers.has(peer.id)
-        );
-
-        // Connect to new peers
-        for (const peer of newPeers) {
-            try {
-                await this.node.connectToPeer(peer.address);
-                console.log(`Connected to discovered peer: ${peer.id} at ${peer.address}`);
-            } catch (error) {
-                console.error(`Failed to connect to discovered peer ${peer.id}:`, error);
-            }
+                // Set connection timeout
+                setTimeout(() => {
+                    if (this.socket) {
+                        this.socket.close();
+                    }
+                    reject(new Error(`Connection timeout to node at ${nodeAddress}`));
+                }, 5000);
+            });
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            throw new Error(`Failed to connect to node: ${errorMessage}`);
         }
     }
 
-    public async start(port: number): Promise<void> {
-        await this.node.start(port);
+    private setupConnection(): void {
+        if (!this.socket) {
+            throw new Error('Socket not initialized');
+        }
+
+        this.socket.on('message', (data: WebSocket.RawData) => {
+            try {
+                const message = JSON.parse(data.toString());
+                this.handleMessage(message);
+            } catch (error) {
+                console.error('Error handling message:', error);
+            }
+        });
+
+        this.socket.on('close', () => {
+            this.currentNodeAddress = null;
+            this.socket = null;
+            console.log('Disconnected from node');
+        });
+
+        // Send wallet registration
+        this.sendMessage({
+            type: 'WALLET_REGISTRATION',
+            payload: {
+                walletId: this.wallet.getWalletId(),
+                identity: this.wallet.getCurrentIdentity().getId()
+            },
+            sender: this.wallet.getWalletId(),
+            timestamp: Date.now()
+        });
     }
 
-    public async connectToPeer(peerAddress: string): Promise<void> {
-        await this.node.connectToPeer(peerAddress);
+    private handleMessage(message: PeerMessage): void {
+        // Handle incoming messages from the node
+        console.log('Received message from node:', message);
     }
 
-    public stop(): void {
-        this.node.stop();
+    private sendMessage(message: PeerMessage): void {
+        if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+            throw new Error('Not connected to any node');
+        }
+
+        this.socket.send(JSON.stringify(message));
     }
 
-    public getPeers(): string[] {
-        return this.node.getPeers();
+    public async stop(): Promise<void> {
+        if (this.socket) {
+            this.socket.close();
+            this.socket = null;
+            this.currentNodeAddress = null;
+        }
+    }
+
+    public isConnected(): boolean {
+        return this.socket !== null && this.socket.readyState === WebSocket.OPEN;
+    }
+
+    public getCurrentNodeAddress(): string | null {
+        return this.currentNodeAddress;
     }
 }
