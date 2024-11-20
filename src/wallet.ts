@@ -1,75 +1,109 @@
+// wallet.ts
 import * as crypto from 'crypto';
-import { EventEmitter } from 'events';
 import { IdentityStore, StoredIdentity } from './identity-store';
 import { SecureStorage } from './secure-storage';
 import { generateId } from './cryptography';
-import { NetworkManager } from './network-manager';
 
 export class WalletEvent {
     static readonly IDENTITY_CREATED = 'IDENTITY_CREATED';
-    static readonly CONNECTED_TO_NODE = 'CONNECTED_TO_NODE';
-    static readonly DISCONNECTED_FROM_NODE = 'DISCONNECTED_FROM_NODE';
+    static readonly WALLET_LOADED = 'WALLET_LOADED';
+    static readonly WALLET_CREATED = 'WALLET_CREATED';
 }
 
-export class DigitalWallet extends EventEmitter {
-    private id = crypto.randomBytes(16).toString('hex');
+export class DigitalWallet {
+    private id: string;
     private identityStore: IdentityStore;
-    private currentIdentity: StoredIdentity;
+    private currentIdentity: StoredIdentity | null;
     private secureStorage: SecureStorage;
-    private networkManager: NetworkManager | null = null;
+    private eventListeners: Map<string, Function[]>;
+    private filePath: string;
 
-    constructor(password: string, storeFile: string = 'identities.json') {
-        super();
+    constructor(password: string, filePath: string) {
+        // Initialize event listeners first
+        this.eventListeners = new Map();
+        this.filePath = filePath;
         this.secureStorage = new SecureStorage(password);
-        this.identityStore = new IdentityStore(storeFile, this.secureStorage);
+        this.currentIdentity = null;
         
-        const identities = this.identityStore.getAllIdentities();
-        if (identities.length === 0) {
-            this.currentIdentity = this.identityStore.createNewIdentity('default');
-            console.log('Created default identity for new wallet');
-        } else {
-            this.currentIdentity = identities[0];
-            console.log('Loaded existing identity for wallet');
-        }
-    }
-
-    public async connectToNode(nodeAddress: string): Promise<void> {
         try {
-            if (this.networkManager) {
-                await this.networkManager.stop();
+            // Initialize identity store
+            this.identityStore = new IdentityStore(filePath, this.secureStorage);
+            const identities = this.identityStore.getAllIdentities();
+            
+            if (identities.length === 0) {
+                // New wallet
+                this.id = generateId();
+                this.currentIdentity = this.identityStore.createNewIdentity('default');
+                this.emit(WalletEvent.WALLET_CREATED, { id: this.id });
+                console.log('Created new wallet with ID:', this.id);
+            } else {
+                // Existing wallet
+                this.id = this.loadWalletId();
+                this.currentIdentity = identities[0];
+                this.emit(WalletEvent.WALLET_LOADED, { id: this.id });
+                console.log('Loaded existing wallet with ID:', this.id);
             }
-
-            this.networkManager = new NetworkManager(this);
-            await this.networkManager.connectToNode(nodeAddress);
-            this.emit(WalletEvent.CONNECTED_TO_NODE, { nodeAddress });
-            console.log(`Wallet connected to node at ${nodeAddress}`);
         } catch (error) {
-            console.error('Failed to connect to node:', error);
-            throw error;
+            console.error('Error during wallet initialization:', error);
+            throw new Error(`Failed to initialize wallet: ${error}`);
         }
     }
 
-    public async disconnectFromNode(): Promise<void> {
-        if (this.networkManager) {
-            await this.networkManager.stop();
-            this.networkManager = null;
-            this.emit(WalletEvent.DISCONNECTED_FROM_NODE);
-            console.log('Wallet disconnected from node');
+    private loadWalletId(): string {
+        try {
+            const identities = this.identityStore.getAllIdentities();
+            if (identities.length > 0) {
+                // Use the entire first identity ID as the wallet ID
+                return identities[0].getId();
+            }
+            throw new Error('No identities found in wallet');
+        } catch (error) {
+            throw new Error(`Failed to load wallet ID: ${error}`);
         }
     }
 
-    public isConnectedToNode(): boolean {
-        return this.networkManager !== null && this.networkManager.isConnected();
+    private emit(event: string, data: any): void {
+        const listeners = this.eventListeners.get(event) || [];
+        listeners.forEach(listener => {
+            try {
+                listener(data);
+            } catch (error) {
+                console.error(`Error in event listener for ${event}:`, error);
+            }
+        });
     }
 
-    public getCurrentNodeAddress(): string | null {
-        return this.networkManager?.getCurrentNodeAddress() || null;
+    public addEventListener(event: string, callback: Function): void {
+        if (!this.eventListeners.has(event)) {
+            this.eventListeners.set(event, []);
+        }
+        const listeners = this.eventListeners.get(event);
+        if (listeners) {
+            listeners.push(callback);
+        }
     }
 
-    public createNewIdentity(name: string = ''): StoredIdentity {
-        const identity = this.identityStore.createNewIdentity(name);
-        this.emit(WalletEvent.IDENTITY_CREATED, { identity });
-        return identity;
+    public removeEventListener(event: string, callback: Function): void {
+        const listeners = this.eventListeners.get(event);
+        if (listeners) {
+            const index = listeners.indexOf(callback);
+            if (index !== -1) {
+                listeners.splice(index, 1);
+            }
+        }
+    }
+
+    public createNewIdentity(name: string = ''): void {
+        try {
+            const identity = this.identityStore.createNewIdentity(name);
+            if (!this.currentIdentity) {
+                this.currentIdentity = identity;
+            }
+            this.emit(WalletEvent.IDENTITY_CREATED, { identity });
+            console.log(`Created new identity: ${identity.getId()} with name: ${name || 'unnamed'}`);
+        } catch (error) {
+            throw new Error(`Failed to create new identity: ${error}`);
+        }
     }
 
     public listIdentities(): StoredIdentity[] {
@@ -80,7 +114,11 @@ export class DigitalWallet extends EventEmitter {
         return this.id;
     }
 
-    public getCurrentIdentity(): StoredIdentity {
+    public getFilePath(): string {
+        return this.filePath;
+    }
+
+    public getCurrentIdentity(): StoredIdentity | null {
         return this.currentIdentity;
     }
 }
