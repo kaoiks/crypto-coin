@@ -1,5 +1,5 @@
 export interface PeerMessage {
-    type: 'TRANSACTION' | 'BLOCK' | 'PEER_DISCOVERY';
+    type: 'TRANSACTION' | 'BLOCK' | 'PEER_DISCOVERY' | 'CHAIN_REQUEST' | 'CHAIN_RESPONSE';
     payload: any;
     sender: string;
     timestamp: number;

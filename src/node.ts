@@ -1,4 +1,3 @@
-// node.ts
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 import { PeerMessage } from './types';
@@ -167,6 +166,13 @@ export class P2PNode extends EventEmitter {
                 this.emit('error', { error, peerId });
             }
         });
+    }
+
+    public sendToPeer(peerId: string, message: any): void {
+        const peers = this.peers.get(peerId);
+        if (peers?.socket.readyState === WebSocket.OPEN) {
+            peers.socket.send(JSON.stringify(message));
+        }
     }
 
     public stop(): void {

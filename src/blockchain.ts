@@ -3,19 +3,42 @@ import { Block } from './types';
 
 export class Blockchain {
     private chain: Block[];
-    private difficulty: number;  // Number of leading zeros required in hash
+    private difficulty: number;
 
     constructor(difficulty: number = 4) {
         this.chain = [this.createGenesisBlock()];
         this.difficulty = difficulty;
     }
 
+    public replaceChain(newChain: Block[]): void {
+        if (newChain.length <= this.chain.length) {
+            throw new Error('New chain must be longer than current chain');
+        }
+
+        // Verify the new chain
+        for (let i = 1; i < newChain.length; i++) {
+            if (newChain[i].previousHash !== newChain[i-1].hash) {
+                throw new Error('Invalid chain continuity in new chain');
+            }
+        }
+
+        // Replace the chain
+        this.chain = newChain;
+        console.log('Chain replaced successfully');
+    }
+
+    // Add method to get difficulty
+    public getDifficulty(): number {
+        return this.difficulty;
+    }
+
+
     // Creates the first block in the chain
     private createGenesisBlock(): Block {
         const block: Block = {
             index: 0,
             previousHash: "0".repeat(64),
-            timestamp: Date.now(),
+            timestamp: 1700000000000, // Fixed timestamp for genesis block
             data: "Genesis Block",
             nonce: 0,
             hash: ""

@@ -1,4 +1,3 @@
-// wallet.ts
 import * as crypto from 'crypto';
 import { IdentityStore, StoredIdentity } from './identity-store';
 import { SecureStorage } from './secure-storage';
