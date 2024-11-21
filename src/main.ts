@@ -1,4 +1,6 @@
+import { Blockchain } from "./blockchain";
 import { NetworkManager } from "./network-manager";
+import { PeerMessage } from "./types";
 import { DigitalWallet, WalletEvent } from "./wallet";
 
 async function main() {
@@ -45,6 +47,13 @@ async function main() {
                 await networkManager.connectToPeer(peerAddress);
                 console.log(`Connected to peer at ${peerAddress}`);
             }
+            const blockchain = new Blockchain(4);
+
+            blockchain.createBlock("Block 1 Data");
+            blockchain.createBlock("Block 2 Data");
+
+            console.log(blockchain.getChain());
+            console.log("Is chain valid?", blockchain.isValid());
 
             // Handle shutdown
             process.on('SIGINT', () => {

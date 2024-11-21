@@ -9,3 +9,12 @@ export interface KeyPair {
     publicKey: string;
     privateKey: string;
 };
+
+export interface Block {
+    index: number;
+    previousHash: string;
+    timestamp: number;
+    data: any;
+    nonce: number;
+    hash: string;
+}
