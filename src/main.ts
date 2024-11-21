@@ -1,4 +1,7 @@
+import { Blockchain } from "./blockchain";
+import { MiningNode } from "./mining-node";
 import { NetworkManager } from "./network-manager";
+import { PeerMessage } from "./types";
 import { DigitalWallet, WalletEvent } from "./wallet";
 
 async function main() {
@@ -83,6 +86,41 @@ async function main() {
                 networkManager.stop();
                 process.exit(0);
             });
+        }
+        else if (command === 'mining-node') {
+            const port = parseInt(process.argv[3]);
+            const peerAddress = process.argv[4];
+            
+            if (!port) {
+                console.error('Usage: npm run dev mining-node <port> [peer-address]');
+                process.exit(1);
+            }
+
+            try {
+                // Create a mining node with difficulty 4
+                const miningNode = new MiningNode(4);
+                
+                // Start the node on specified port
+                await miningNode.start(port);
+                console.log(`Mining node started on port ${port}`);
+
+                // Connect to peer if specified
+                if (peerAddress) {
+                    await miningNode.connectToPeer(peerAddress);
+                    console.log(`Connected to peer at ${peerAddress}`);
+                }
+                
+                // Handle shutdown gracefully
+                process.on('SIGINT', () => {
+                    console.log('Shutting down mining node...');
+                    miningNode.stop();
+                    process.exit(0);
+                });
+        
+            } catch (error) {
+                console.error('Error running mining node:', error);
+                process.exit(1);
+            }
         }
         else {
             console.error('Usage:');
