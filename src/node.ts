@@ -24,6 +24,10 @@ export class P2PNode extends EventEmitter {
         this.port = 0;
     }
 
+    public getId(): string {
+        return this.id;
+    }
+
     public async start(port: number): Promise<void> {
         if (this.isActive) {
             throw new Error('Node is already active');
