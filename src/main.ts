@@ -20,7 +20,6 @@ async function main() {
             const wallet = new DigitalWallet(password, walletPath);
             console.log(`Created new wallet at ${walletPath}`);
             
-            // Create default identity
             wallet.createNewIdentity('default');
             console.log('Created default identity');
             
@@ -49,7 +48,6 @@ async function main() {
                 console.log(`Connected to peer at ${peerAddress}`);
             }
 
-            // Handle shutdown
             process.on('SIGINT', () => {
                 console.log('Shutting down node...');
                 networkManager.stop();
@@ -66,11 +64,9 @@ async function main() {
                 process.exit(1);
             }
             
-            // Load existing wallet
             const wallet = new DigitalWallet(password, walletPath);
             console.log(`Loaded wallet from ${walletPath}`);
             
-            // Connect to node
             const networkManager = new NetworkManager(wallet);
             await networkManager.connectToNode(nodeAddress);
             console.log(`Connected wallet to node at ${nodeAddress}`);
@@ -80,7 +76,6 @@ async function main() {
                 console.log(`- ${identity.getName() || 'unnamed'} (${identity.getId()})`);
             });
 
-            // Handle shutdown
             process.on('SIGINT', () => {
                 console.log('Disconnecting wallet...');
                 networkManager.stop();
@@ -89,28 +84,24 @@ async function main() {
         }
         else if (command === 'mining-node') {
             const port = parseInt(process.argv[3]);
-            const peerAddress = process.argv[4];
+            const difficulty = parseInt(process.argv[4]) || 4;
+            const peerAddress = process.argv[5];
             
             if (!port) {
-                console.error('Usage: npm run dev mining-node <port> [peer-address]');
+                console.error('Usage: npm run dev mining-node <port> <difficulty> [peer-address]');
                 process.exit(1);
             }
 
             try {
-                // Create a mining node with difficulty 4
-                const miningNode = new MiningNode(4);
-                
-                // Start the node on specified port
+                const miningNode = new MiningNode(difficulty);
                 await miningNode.start(port);
-                console.log(`Mining node started on port ${port}`);
+                console.log(`Mining node started on port ${port} with difficulty ${difficulty}`);
 
-                // Connect to peer if specified
                 if (peerAddress) {
                     await miningNode.connectToPeer(peerAddress);
                     console.log(`Connected to peer at ${peerAddress}`);
                 }
                 
-                // Handle shutdown gracefully
                 process.on('SIGINT', () => {
                     console.log('Shutting down mining node...');
                     miningNode.stop();
@@ -127,6 +118,7 @@ async function main() {
             console.error('  Create wallet: npm run dev create-wallet <password> <wallet-path>');
             console.error('  Start node:    npm run dev start-node <port> [peer-address]');
             console.error('  Connect wallet: npm run dev connect-wallet <wallet-path> <password> <node-address>');
+            console.error('  Mining node:    npm run dev mining-node <port> <difficulty> [peer-address]');
             process.exit(1);
         }
     } catch (error) {
