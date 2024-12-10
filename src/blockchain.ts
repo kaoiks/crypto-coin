@@ -37,7 +37,7 @@ export class Blockchain {
     private createGenesisBlock(): Block {
         const block: Block = {
             index: 0,
-            previousHash: "0".repeat(64),
+            previousHash: "0".repeat(this.difficulty) + "1" + "0".repeat(63 - this.difficulty),
             timestamp: 1700000000000, // Fixed timestamp for genesis block
             data: "Genesis Block",
             nonce: 0,

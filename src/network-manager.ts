@@ -121,6 +121,22 @@ export class NetworkManager {
             return false;
         }
 
+        const calculatedHash = crypto.createHash('sha256')
+        .update(JSON.stringify({
+            index: block.index,
+            previousHash: block.previousHash,
+            timestamp: block.timestamp,
+            data: block.data,
+            nonce: block.nonce
+        }))
+        .digest('hex');
+
+    
+    if (calculatedHash !== block.hash) {
+        console.log(`Invalid block hash. Calculated ${calculatedHash} but got ${block.hash}`);
+        return false;
+    }
+
         const target = "0".repeat(this.blockchain.getDifficulty());
         if (!block.hash.startsWith(target)) {
             console.log('Invalid proof of work');
