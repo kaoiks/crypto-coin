@@ -1,6 +1,6 @@
 import { DigitalWallet, WalletEvent } from './wallet';
 import { P2PNode } from './node';
-import { Block, PeerMessage } from './types';
+import { Block, PeerMessage, Transaction, BLOCKCHAIN_CONSTANTS } from './types';
 import { Blockchain } from './blockchain';
 import * as crypto from 'crypto';
 
@@ -38,6 +38,9 @@ export class NetworkManager {
                 case 'CHAIN_RESPONSE':
                     this.handleChainResponse(message.payload.chain);
                     break;
+                case 'TRANSACTION':
+                    this.handleNewTransaction(message.payload.transaction, message.sender);
+                    break;
             }
         });
 
@@ -61,7 +64,6 @@ export class NetworkManager {
                     this.broadcastPeerDiscovery([newPeer]);
                 }
 
-                // Request chain from peer after connection
                 this.requestChainFromPeer(peerId);
             }
             
@@ -71,7 +73,6 @@ export class NetworkManager {
             }
         });
 
-        // Previous disconnect handler remains the same...
         this.node.on('peerDisconnected', ({ peerId }) => {
             if (this.walletConnections.has(peerId)) {
                 this.walletConnections.delete(peerId);
@@ -101,64 +102,112 @@ export class NetworkManager {
         }
     }
 
-
     protected isValidNewBlock(block: Block): boolean {
         const chain = this.blockchain.getChain();
         const lastBlock = chain[chain.length - 1];
         
-        if (lastBlock.hash === block.hash) {
-            // console.log('Block already in chain');
+        // Basic block validation
+        // Changed duplicate check to look at index and previousHash instead of just hash
+        if (block.index === lastBlock.index) {
+            console.log('Block with this index already exists');
             return false;
         }
-
+    
         if (block.index !== lastBlock.index + 1) {
-            console.log('Invalid block index');
+            console.log(`Invalid block index. Expected ${lastBlock.index + 1} but got ${block.index}`);
             return false;
         }
-
+    
         if (block.previousHash !== lastBlock.hash) {
             console.log(`Invalid previous hash. Expected ${lastBlock.hash} but got ${block.previousHash}`);
             return false;
         }
-
-        const calculatedHash = crypto.createHash('sha256')
-        .update(JSON.stringify({
-            index: block.index,
-            previousHash: block.previousHash,
-            timestamp: block.timestamp,
-            data: block.data,
-            nonce: block.nonce
-        }))
-        .digest('hex');
-
     
-    if (calculatedHash !== block.hash) {
-        console.log(`Invalid block hash. Calculated ${calculatedHash} but got ${block.hash}`);
-        return false;
-    }
-
+        // Validate block hash and proof of work
+        const calculatedHash = this.calculateBlockHash(block);
+        if (calculatedHash !== block.hash) {
+            console.log(`Invalid block hash. Calculated ${calculatedHash} but got ${block.hash}`);
+            return false;
+        }
+    
         const target = "0".repeat(this.blockchain.getDifficulty());
         if (!block.hash.startsWith(target)) {
             console.log('Invalid proof of work');
             return false;
         }
+    
+        // Transaction validations
+        if (!this.validateBlockTransactions(block)) {
+            return false;
+        }
+    
+        return true;
+    }
+    
+
+    protected calculateBlockHash(block: Block): string {
+        const data = JSON.stringify({
+            index: block.index,
+            previousHash: block.previousHash,
+            timestamp: block.timestamp,
+            transactions: block.transactions,
+            nonce: block.nonce,
+            miner: block.miner,
+            reward: block.reward
+        });
+
+        return crypto.createHash('sha256').update(data).digest('hex');
+    }
+
+    private validateBlockTransactions(block: Block): boolean {
+        // Check if transactions array exists
+        if (!Array.isArray(block.transactions)) {
+            console.log('Block has no transactions array');
+            return false;
+        }
+
+        // Find coinbase transactions
+        const coinbaseTransactions = block.transactions.filter(tx => tx.isCoinbase);
+
+        // Verify only one coinbase transaction exists
+        if (coinbaseTransactions.length !== 1) {
+            console.log(`Invalid number of coinbase transactions: ${coinbaseTransactions.length}`);
+            return false;
+        }
+
+        // Validate coinbase transaction
+        const coinbase = coinbaseTransactions[0];
+        if (!this.blockchain.validateCoinbaseTransaction(coinbase, block.index)) {
+            console.log('Invalid coinbase transaction');
+            return false;
+        }
+
+        // Verify reward amount matches the coinbase amount
+        if (block.reward !== coinbase.amount) {
+            console.log(`Block reward mismatch. Block: ${block.reward}, Coinbase: ${coinbase.amount}`);
+            return false;
+        }
+
+        // Validate all other transactions
+        const regularTransactions = block.transactions.filter(tx => !tx.isCoinbase);
+        for (const transaction of regularTransactions) {
+            if (!this.blockchain.validateTransaction(transaction)) {
+                console.log(`Invalid transaction: ${transaction.id}`);
+                return false;
+            }
+        }
 
         return true;
     }
 
-    protected requestChainFromPeer(peerId: string): void {
-        const message: PeerMessage = {
-            type: 'CHAIN_REQUEST',
-            payload: {},
-            sender: this.getNodeId(),
-            timestamp: Date.now()
-        };
-
-        const peers = this.node.getPeersWithAddresses();
-        const peer = peers.find(p => p.id === peerId);
-        if (peer) {
-            this.node.sendToPeer(peer.id, message);
-            console.log(`Requested chain from peer ${peerId}`);
+    protected handleNewTransaction(transaction: Transaction, sender: string): void {
+        try {
+            if (this.blockchain.validateTransaction(transaction)) {
+                // Add to mempool (to be implemented)
+                this.broadcastTransaction(transaction, sender);
+            }
+        } catch (error) {
+            console.error('Error handling new transaction:', error);
         }
     }
 
@@ -177,30 +226,44 @@ export class NetworkManager {
     }
 
     protected handleChainResponse(receivedChain: Block[]): void {
-        if (this.isValidChain(receivedChain) && this.shouldReplaceChain(receivedChain)) {
-            console.log('Received valid longer chain. Replacing current chain...');
-            this.blockchain.replaceChain(receivedChain);
+        try {
+            if (this.isValidChain(receivedChain) && this.shouldReplaceChain(receivedChain)) {
+                console.log('Received valid longer chain. Replacing current chain...');
+                this.blockchain.replaceChain(receivedChain);
+            }
+        } catch (error) {
+            console.error('Error handling chain response:', error);
         }
     }
 
     protected isValidChain(chain: Block[]): boolean {
+        // Validate genesis block
         if (JSON.stringify(chain[0]) !== JSON.stringify(this.blockchain.getChain()[0])) {
             console.log('Invalid genesis block');
             return false;
         }
 
+        // Validate each block in the chain
         for (let i = 1; i < chain.length; i++) {
             const currentBlock = chain[i];
             const previousBlock = chain[i - 1];
 
+            // Validate block linkage
             if (currentBlock.previousHash !== previousBlock.hash) {
                 console.log('Invalid chain continuity');
                 return false;
             }
 
+            // Validate proof of work
             const target = "0".repeat(this.blockchain.getDifficulty());
             if (!currentBlock.hash.startsWith(target)) {
                 console.log('Invalid proof of work in chain');
+                return false;
+            }
+
+            // Validate block transactions
+            if (!this.validateBlockTransactions(currentBlock)) {
+                console.log('Invalid transactions in block');
                 return false;
             }
         }
@@ -208,6 +271,7 @@ export class NetworkManager {
         return true;
     }
 
+    // Rest of the existing methods...
     protected shouldReplaceChain(newChain: Block[]): boolean {
         return newChain.length > this.blockchain.getChain().length;
     }
@@ -220,19 +284,51 @@ export class NetworkManager {
             timestamp: Date.now()
         };
 
-        // Get all peers except the original sender and wallets
         const peersToSend = this.getPeers().filter(peerId => 
             peerId !== originalSender && 
             !this.walletConnections.has(peerId)
         );
 
-        // Send to each peer individually
         peersToSend.forEach(peerId => {
             this.node.sendToPeer(peerId, blockMessage);
         });
 
         if (peersToSend.length > 0) {
             console.log(`Forwarded block ${block.hash} to ${peersToSend.length} peers`);
+        }
+    }
+
+    protected broadcastTransaction(transaction: Transaction, originalSender?: string): void {
+        const transactionMessage: PeerMessage = {
+            type: 'TRANSACTION',
+            payload: { transaction },
+            sender: this.getNodeId(),
+            timestamp: Date.now()
+        };
+
+        const peersToSend = this.getPeers().filter(peerId => 
+            peerId !== originalSender && 
+            !this.walletConnections.has(peerId)
+        );
+
+        peersToSend.forEach(peerId => {
+            this.node.sendToPeer(peerId, transactionMessage);
+        });
+    }
+
+    protected requestChainFromPeer(peerId: string): void {
+        const message: PeerMessage = {
+            type: 'CHAIN_REQUEST',
+            payload: {},
+            sender: this.getNodeId(),
+            timestamp: Date.now()
+        };
+
+        const peers = this.node.getPeersWithAddresses();
+        const peer = peers.find(p => p.id === peerId);
+        if (peer) {
+            this.node.sendToPeer(peer.id, message);
+            console.log(`Requested chain from peer ${peerId}`);
         }
     }
 
@@ -245,7 +341,6 @@ export class NetworkManager {
         });
     }
 
-    // Rest of the methods remain the same...
     public getPeers(): string[] {
         return this.node.getPeers().filter(peerId => !this.walletConnections.has(peerId));
     }
@@ -293,36 +388,29 @@ export class NetworkManager {
     public getNodeId(): string {
         return this.node.getId();
     }
-    
+
     public getNode(): P2PNode {
         return this.node;
     }
-    
-    private async handlePeerDiscovery(message: PeerMessage): Promise<void> {
-        if (this.isWalletNode) {
-            return;
-        }
+
+    private handlePeerDiscovery(message: PeerMessage): void {
+        if (this.isWalletNode) return;
 
         const { peers } = message.payload;
         
-        for (const peer of peers) {
-            // Skip wallets, known peers, and self
-            if (this.knownPeers.has(peer.id) || 
-                peer.id === this.node.getId() || 
-                peer.address.includes('localhost:0')) {
-                continue;
+        peers.forEach(async (peer: { id: string; address: string }) => {
+            if (!this.knownPeers.has(peer.id) && 
+                peer.id !== this.node.getId() && 
+                !peer.address.includes('localhost:0')) {
+                try {
+                    this.knownPeers.add(peer.id);
+                    await this.node.connectToPeer(peer.address);
+                    console.log(`Connected to discovered peer: ${peer.id} at ${peer.address}`);
+                } catch (error) {
+                    this.knownPeers.delete(peer.id);
+                    console.error(`Failed to connect to discovered peer ${peer.id}:`, error);
+                }
             }
-
-            try {
-                this.knownPeers.add(peer.id);
-                await this.node.connectToPeer(peer.address);
-                console.log(`Connected to discovered peer: ${peer.id} at ${peer.address}`);
-            } catch (error) {
-                this.knownPeers.delete(peer.id);
-                console.error(`Failed to connect to discovered peer ${peer.id}:`, error);
-            }
-        }
+        });
     }
 }
-
-    
