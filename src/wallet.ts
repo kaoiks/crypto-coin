@@ -2,6 +2,8 @@ import * as crypto from 'crypto';
 import { IdentityStore, StoredIdentity } from './identity-store';
 import { SecureStorage } from './secure-storage';
 import { generateId } from './cryptography';
+import { NetworkManager } from './network-manager';
+import { Transaction, PeerMessage, TransactionStatus } from './types';
 
 export class WalletEvent {
     static readonly IDENTITY_CREATED = 'IDENTITY_CREATED';
@@ -120,4 +122,67 @@ export class DigitalWallet {
     public getCurrentIdentity(): StoredIdentity | null {
         return this.currentIdentity;
     }
+
+
+    public createTransaction(recipientAddress: string, amount: number): Transaction {
+        if (!this.currentIdentity) {
+            throw new Error('No active identity in wallet');
+        }
+    
+        const transaction: Transaction = {
+            id: crypto.randomBytes(32).toString('hex'),
+            sender: this.currentIdentity.getPublicKey(),
+            recipient: recipientAddress,
+            amount: amount,
+            timestamp: Date.now(),
+            isCoinbase: false
+        };
+    
+        // Sign the transaction
+        const transactionData = JSON.stringify({
+            id: transaction.id,
+            sender: transaction.sender,
+            recipient: transaction.recipient,
+            amount: transaction.amount,
+            timestamp: transaction.timestamp,
+            isCoinbase: transaction.isCoinbase
+        });
+    
+        const sign = crypto.createSign('SHA256');
+        sign.update(transactionData);
+        transaction.signature = sign.sign(this.currentIdentity.getPrivateKey(), 'hex');
+    
+        return transaction;
+    }
+    
+    public async submitTransaction(networkManager: NetworkManager, recipientAddress: string, amount: number): Promise<string> {
+        const transaction = this.createTransaction(recipientAddress, amount);
+    
+        const message: PeerMessage = {
+            type: 'TRANSACTION',
+            payload: { transaction },
+            sender: this.id,
+            timestamp: Date.now()
+        };
+    
+        networkManager.getNode().broadcastMessage(message);
+        return transaction.id;
+    }
+    
+    public async getTransactionStatus(networkManager: NetworkManager, transactionId: string): Promise<TransactionStatus> {
+        const blockchain = networkManager.getBlockchain();
+        const confirmation = blockchain.getTransactionConfirmation(transactionId);
+        
+        if (!confirmation) {
+            // Check if transaction exists in the network's pending transactions
+            const pendingTransactions = networkManager.getNode().getPendingTransactions();
+            if (pendingTransactions.some(tx => tx.id === transactionId)) {
+                return TransactionStatus.PENDING;
+            }
+            return TransactionStatus.REJECTED;
+        }
+    
+        return confirmation.status;
+    }
+
 }

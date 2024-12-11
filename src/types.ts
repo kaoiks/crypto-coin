@@ -1,10 +1,10 @@
 export interface PeerMessage {
-    type: 'TRANSACTION' | 'BLOCK' | 'PEER_DISCOVERY' | 'CHAIN_REQUEST' | 'CHAIN_RESPONSE';
+    type: 'TRANSACTION' | 'BLOCK' | 'PEER_DISCOVERY' | 'CHAIN_REQUEST' | 'CHAIN_RESPONSE' | 
+          'MEMPOOL_REQUEST' | 'MEMPOOL_RESPONSE' | 'MEMPOOL_SYNC_REQUEST' | 'MEMPOOL_SYNC_RESPONSE';
     payload: any;
     sender: string;
     timestamp: number;
 }
-
 export interface KeyPair {
     publicKey: string;
     privateKey: string;
@@ -93,4 +93,24 @@ export interface AccountBalance {
     confirmed: number;          // Balance confirmed in blockchain
     pending: number;           // Balance in pending transactions
     lastUpdated: number;       // Timestamp of last balance update
+}
+
+export const MEMPOOL_CONSTANTS = {
+    // Maximum number of transactions to store in mempool
+    MAX_TRANSACTIONS: 5000,
+    // Time after which transactions expire from mempool (1 hour in milliseconds)
+    TRANSACTION_TIMEOUT: 3600000,
+    // Minimum time between identical transactions (10 minutes in milliseconds)
+    TRANSACTION_COOLDOWN: 600000,
+    // Maximum transaction size in bytes
+    MAX_TRANSACTION_SIZE: 1024
+};
+
+export interface MempoolTransaction extends Transaction {
+    // Time the transaction was added to mempool
+    addedAt: number;
+    // Number of times this transaction was received from peers
+    receivedCount: number;
+    // List of peers this transaction was received from
+    receivedFrom: string[];
 }

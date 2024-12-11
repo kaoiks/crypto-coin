@@ -154,31 +154,42 @@ export class Blockchain {
         if (transaction.isCoinbase) {
             return true;
         }
-
+    
         // Verify basic transaction properties
         if (!transaction.sender || !transaction.recipient || transaction.amount <= 0) {
+            console.log('Transaction validation failed: Invalid basic properties');
+            console.log('Sender:', transaction.sender ? 'present' : 'missing');
+            console.log('Recipient:', transaction.recipient ? 'present' : 'missing');
+            console.log('Amount:', transaction.amount);
             return false;
         }
-
+    
         // Verify signature
         if (!this.verifyTransactionSignature(transaction)) {
+            console.log('Transaction validation failed: Invalid signature');
             return false;
         }
-
+    
         // Verify sender has sufficient balance
         const senderBalance = this.getAccountBalance(transaction.sender);
         if (senderBalance.confirmed < transaction.amount) {
+            console.log('Transaction validation failed: Insufficient balance');
+            console.log('Required:', transaction.amount);
+            console.log('Available:', senderBalance.confirmed);
+            console.log('Sender address:', transaction.sender);
             return false;
         }
-
+    
         return true;
     }
+    
 
     private verifyTransactionSignature(transaction: Transaction): boolean {
         if (!transaction.signature) {
+            console.log('Transaction validation failed: Missing signature');
             return false;
         }
-
+    
         const transactionData = JSON.stringify({
             id: transaction.id,
             sender: transaction.sender,
@@ -187,7 +198,7 @@ export class Blockchain {
             timestamp: transaction.timestamp,
             isCoinbase: transaction.isCoinbase
         });
-
+    
         try {
             const verify = crypto.createVerify('SHA256');
             verify.update(transactionData);
@@ -195,25 +206,31 @@ export class Blockchain {
             // For coinbase transactions, verify against miner's public key
             const publicKey = transaction.isCoinbase ? transaction.recipient : transaction.sender;
             
-            // Add null check for public key
             if (!publicKey) {
-                console.error('No public key available for verification');
+                console.log('Transaction validation failed: No public key available for verification');
                 return false;
             }
-
-            return verify.verify(publicKey, transaction.signature, 'hex');
+    
+            const result = verify.verify(publicKey, transaction.signature, 'hex');
+            if (!result) {
+                console.log('Transaction validation failed: Signature verification failed');
+            }
+            return result;
         } catch (error) {
-            console.error('Error verifying signature:', error);
+            console.log('Transaction validation failed: Error during signature verification:', error);
             return false;
         }
     }
 
     public getAccountBalance(address: string): AccountBalance {
+        console.log(`Calculating balance for address: ${address}`);
+        
         const existingBalance = this.balances.get(address);
         if (existingBalance) {
+            console.log(`Found existing balance: ${JSON.stringify(existingBalance)}`);
             return existingBalance;
         }
-
+    
         // Initialize new account balance
         const newBalance: AccountBalance = {
             address,
@@ -221,7 +238,32 @@ export class Blockchain {
             pending: 0,
             lastUpdated: Date.now()
         };
-
+    
+        // Calculate balance from chain
+        console.log('Calculating balance from chain...');
+        let total = 0;
+        
+        this.chain.forEach((block, index) => {
+            console.log(`Checking block ${index}`);
+            block.transactions.forEach(transaction => {
+                if (transaction.isCoinbase && transaction.recipient === address) {
+                    console.log(`Found mining reward: +${transaction.amount}`);
+                    total += transaction.amount;
+                }
+                else if (transaction.sender === address) {
+                    console.log(`Found outgoing transaction: -${transaction.amount}`);
+                    total -= transaction.amount;
+                }
+                else if (transaction.recipient === address) {
+                    console.log(`Found incoming transaction: +${transaction.amount}`);
+                    total += transaction.amount;
+                }
+            });
+        });
+    
+        newBalance.confirmed = total;
+        console.log(`Final calculated balance: ${total}`);
+        
         this.balances.set(address, newBalance);
         return newBalance;
     }

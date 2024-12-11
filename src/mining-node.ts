@@ -121,13 +121,13 @@ export class MiningNode extends NetworkManager {
             try {
                 const currentChain = this.blockchain.getChain();
                 const lastBlock = currentChain[currentChain.length - 1];
-                const blockIndex = lastBlock.index + 1; // Explicitly use last block index + 1
+                const blockIndex = lastBlock.index + 1;
                 
                 // Create coinbase transaction for the block
                 const coinbaseTransaction = this.createCoinbaseTransaction(blockIndex);
                 
-                // Get pending transactions from mempool (to be implemented)
-                const pendingTransactions: Transaction[] = [];
+                // Get pending transactions from mempool
+                const pendingTransactions = this.mempool.getTransactions(BLOCKCHAIN_CONSTANTS.MAX_TRANSACTIONS_PER_BLOCK - 1);
                 
                 // Create new block with coinbase and pending transactions
                 const transactions = [coinbaseTransaction, ...pendingTransactions];
@@ -151,6 +151,9 @@ export class MiningNode extends NetworkManager {
                 if (this.isValidNewBlock(newBlock)) {
                     // Add to our chain first
                     this.blockchain.getChain().push(newBlock);
+                    
+                    // Remove mined transactions from mempool
+                    this.mempool.removeTransactions(pendingTransactions);
                     
                     // Then broadcast
                     this.broadcastNewBlock(newBlock);

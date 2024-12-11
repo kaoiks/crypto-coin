@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
-import { PeerMessage } from './types';
+import { PeerMessage, Transaction } from './types';  // Added Transaction import
 
 interface PeerInfo {
     socket: WebSocket;
@@ -173,6 +173,17 @@ export class P2PNode extends EventEmitter {
         if (peers?.socket.readyState === WebSocket.OPEN) {
             peers.socket.send(JSON.stringify(message));
         }
+    }
+
+    public getPendingTransactions(): Transaction[] {
+        if (this.server && this.isActive) {
+            return Array.from(this.peers.values()).reduce((transactions: Transaction[], peerInfo) => {
+                // Here we would get pending transactions from connected peers
+                // For now, return empty array as we haven't implemented transaction sharing yet
+                return transactions;
+            }, []);
+        }
+        return [];
     }
 
     public stop(): void {

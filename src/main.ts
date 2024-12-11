@@ -1,8 +1,11 @@
 import { Blockchain } from "./blockchain";
 import { MiningNode } from "./mining-node";
 import { NetworkManager } from "./network-manager";
-import { PeerMessage } from "./types";
+import { Transaction, PeerMessage, TransactionStatus } from './types';
+import * as readline from 'readline';
 import { DigitalWallet, WalletEvent } from "./wallet";
+import * as crypto from 'crypto';
+import * as fs from 'fs';
 
 async function main() {
     try {
@@ -237,6 +240,260 @@ async function main() {
                 process.exit(1);
             }
         }
+        else if (command === 'send-transaction') {
+            const walletPath = process.argv[3];
+            const password = process.argv[4];
+            const nodeAddress = process.argv[5];
+            const recipientKeyPath = process.argv[6];
+            
+            if (!walletPath || !password || !nodeAddress || !recipientKeyPath) {
+                console.error('Usage: npm run dev send-transaction <wallet-path> <password> <node-address> <recipient-key-file>');
+                process.exit(1);
+            }
+        
+            try {
+                // Load recipient's public key from file
+                let recipientAddress: string;
+                try {
+                    recipientAddress = fs.readFileSync(recipientKeyPath, 'utf8').trim();
+                    
+                    // Validate public key format
+                    if (!recipientAddress.includes('-----BEGIN PUBLIC KEY-----') || 
+                        !recipientAddress.includes('-----END PUBLIC KEY-----')) {
+                        console.error('Invalid public key format in file. Must include BEGIN/END markers');
+                        process.exit(1);
+                    }
+                } catch (error) {
+                    console.error(`Error reading recipient key file: ${error}`);
+                    process.exit(1);
+                }
+        
+                // Create readline interface with visible input
+                const rl = readline.createInterface({
+                    input: process.stdin,
+                    output: process.stdout
+                });
+        
+                // Load the wallet
+                const wallet = new DigitalWallet(password, walletPath);
+                console.log(`\nLoaded wallet from ${walletPath}`);
+                
+                const currentIdentity = wallet.getCurrentIdentity();
+                if (!currentIdentity) {
+                    console.error('No active identity in wallet');
+                    process.exit(1);
+                }
+        
+                console.log('\nYour current wallet address:');
+                console.log(currentIdentity.getPublicKey());
+        
+                console.log('\nRecipient address loaded from file:');
+                console.log(recipientAddress);
+        
+                // Create network manager and connect
+                const networkManager = new NetworkManager(wallet);
+                
+                // Setup chain sync completion handler
+                let chainSynced = false;
+                networkManager.getNode().on('message', async (message: PeerMessage) => {
+                    if (message.type === 'CHAIN_RESPONSE' && !chainSynced) {
+                        chainSynced = true;
+                        
+                        const blockchain = networkManager.getBlockchain();
+                        const balance = blockchain.getAccountBalance(currentIdentity.getPublicKey());
+                        
+                        console.log('\nCurrent balance:', balance.confirmed, 'coins');
+                        if (balance.pending > 0) {
+                            console.log('Pending balance:', balance.pending, 'coins');
+                        }
+        
+                        rl.question('\nEnter amount to send: ', async (amountStr) => {
+                            const amount = parseFloat(amountStr);
+                            
+                            if (isNaN(amount) || amount <= 0) {
+                                console.error('Invalid amount. Please enter a positive number.');
+                                networkManager.stop();
+                                rl.close();
+                                process.exit(1);
+                            }
+        
+                            if (amount > balance.confirmed) {
+                                console.error('Insufficient balance for this transaction.');
+                                networkManager.stop();
+                                rl.close();
+                                process.exit(1);
+                            }
+        
+                            // Show confirmation prompt with transaction details
+                            console.log('\nTransaction Details:');
+                            console.log('-------------------');
+                            console.log('From:   ', currentIdentity.getPublicKey());
+                            console.log('To:     ', recipientAddress);
+                            console.log('Amount: ', amount);
+        
+                            rl.question('\nConfirm transaction? (yes/no): ', async (answer) => {
+                                if (answer.toLowerCase() === 'yes' || answer.toLowerCase() === 'y') {
+                                    try {
+                                        const transaction = wallet.createTransaction(recipientAddress, amount);
+                                
+                                        const message: PeerMessage = {
+                                            type: 'TRANSACTION',
+                                            payload: { transaction },
+                                            sender: wallet.getWalletId(),
+                                            timestamp: Date.now()
+                                        };
+                                
+                                        networkManager.getNode().broadcastMessage(message);
+                                        console.log(`\nTransaction ${transaction.id} sent to network`);
+                                        
+                                        // Cleanup and exit
+                                        networkManager.stop();
+                                        rl.close();
+                                        process.exit(0);
+                                    } catch (error) {
+                                        console.error('Error sending transaction:', error);
+                                        networkManager.stop();
+                                        rl.close();
+                                        process.exit(1);
+                                    }
+                                } else {
+                                    console.log('Transaction cancelled');
+                                    networkManager.stop();
+                                    rl.close();
+                                    process.exit(0);
+                                }
+                            });
+                        });
+                    }
+                });
+        
+                // Connect to node and request chain
+                await networkManager.connectToNode(nodeAddress);
+                console.log(`\nConnected to node at ${nodeAddress}`);
+                console.log('Synchronizing with blockchain...');
+        
+                // Set a timeout in case sync never completes
+                setTimeout(() => {
+                    if (!chainSynced) {
+                        console.error('Timeout waiting for blockchain sync');
+                        networkManager.stop();
+                        rl.close();
+                        process.exit(1);
+                    }
+                }, 10000); // 10 second timeout
+        
+            } catch (error) {
+                console.error('Error setting up transaction:', error);
+                process.exit(1);
+            }
+        }
+        // In main.ts, modify the view-mempool command handler:
+
+        else if (command === 'view-mempool') {
+            const nodeAddress = process.argv[3];
+            
+            if (!nodeAddress) {
+                console.error('Usage: npm run dev view-mempool <node-address>');
+                process.exit(1);
+            }
+        
+            try {
+                const networkManager = new NetworkManager();
+                let chainSynced = false;
+        
+                networkManager.getNode().on('message', async (message: PeerMessage) => {
+                    if (message.type === 'CHAIN_RESPONSE' && !chainSynced) {
+                        chainSynced = true;
+                        
+                        // Request mempool state after chain sync
+                        const mempoolRequest: PeerMessage = {
+                            type: 'MEMPOOL_REQUEST',
+                            payload: {},
+                            sender: networkManager.getNodeId(),
+                            timestamp: Date.now()
+                        };
+        
+                        networkManager.getNode().broadcastMessage(mempoolRequest);
+                    }
+                    
+                    if (message.type === 'MEMPOOL_RESPONSE') {
+                        const transactions: Transaction[] = message.payload.transactions;
+                        
+                        if (!transactions || transactions.length === 0) {
+                            console.log('No pending transactions in mempool');
+                        } else {
+                            console.log('\nPending Transactions:');
+                            transactions.forEach((tx: Transaction) => {
+                                console.log(`\nTransaction ID: ${tx.id}`);
+                                console.log(`From: ${tx.sender?.slice(0, 64)}...`);
+                                console.log(`To: ${tx.recipient.slice(0, 64)}...`);
+                                console.log(`Amount: ${tx.amount}`);
+                                console.log(`Time: ${new Date(tx.timestamp).toLocaleString()}`);
+                            });
+                            console.log(`\nTotal pending transactions: ${transactions.length}`);
+                        }
+        
+                        // Cleanup and exit
+                        networkManager.stop();
+                        process.exit(0);
+                    }
+                });
+        
+                // Start node and connect
+                await networkManager.start(0); // Start on random port
+                await networkManager.connectToPeer(nodeAddress);
+                console.log(`Connected to node at ${nodeAddress}`);
+        
+                // Set a timeout
+                setTimeout(() => {
+                    console.error('Timeout waiting for mempool response');
+                    networkManager.stop();
+                    process.exit(1);
+                }, 5000);
+        
+            } catch (error) {
+                console.error('Error viewing mempool:', error);
+                process.exit(1);
+            }
+        }
+        
+        else if (command === 'show-keys') {
+            const walletPath = process.argv[3];
+            const password = process.argv[4];
+            
+            if (!walletPath || !password) {
+                console.error('Usage: npm run dev show-keys <wallet-path> <password>');
+                process.exit(1);
+            }
+        
+            try {
+                // Load the wallet
+                const wallet = new DigitalWallet(password, walletPath);
+                console.log(`Loaded wallet from ${walletPath}`);
+        
+                // Get current identity
+                const currentIdentity = wallet.getCurrentIdentity();
+                if (!currentIdentity) {
+                    console.error('No identity found in wallet');
+                    process.exit(1);
+                }
+        
+                console.log('\nWallet Keys:');
+                console.log('=============');
+                console.log('\nPublic Key (your address to receive coins):');
+                // Print the public key exactly as stored, maintaining the format
+                console.log(currentIdentity.getPublicKey());
+                
+                console.log('\nPrivate Key (keep this secret!):');
+                // Print the private key exactly as stored, maintaining the format
+                console.log(currentIdentity.getPrivateKey());
+                
+                process.exit(0);
+            } catch (error) {
+                console.error('Error displaying wallet keys:', error);
+                process.exit(1);
+            }
+        }
 
         else {
             console.error('Usage:');
@@ -246,6 +503,9 @@ async function main() {
             console.error('  Start mining node:      npm run dev mining-node <port> <wallet-path> <password> [difficulty] [peer-address]');
             console.error('  Connect mining wallet:   npm run dev connect-mining-wallet <node-port> <wallet-path> <password>');
             console.error('  Check balance:          npm run dev check-balance <wallet-path> <password> <node-address>');
+            console.error('  Send transaction:       npm run dev send-transaction <wallet-path> <password> <node-address> <recipient-address> <amount>');
+            console.error('  View mempool:           npm run dev view-mempool <node-address>');
+            console.error('  Show wallet keys:       npm run dev show-keys <wallet-path> <password>');
             process.exit(1);
         }
     } catch (error) {

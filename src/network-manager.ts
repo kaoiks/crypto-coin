@@ -2,6 +2,7 @@ import { DigitalWallet, WalletEvent } from './wallet';
 import { P2PNode } from './node';
 import { Block, PeerMessage, Transaction, BLOCKCHAIN_CONSTANTS } from './types';
 import { Blockchain } from './blockchain';
+import { Mempool } from './mempool';
 import * as crypto from 'crypto';
 
 export class NetworkManager {
@@ -11,6 +12,7 @@ export class NetworkManager {
     private knownPeers: Set<string>;
     private walletConnections: Set<string>;
     protected blockchain: Blockchain;
+    protected mempool: Mempool;
 
     constructor(wallet?: DigitalWallet, difficulty: number = 4) {
         this.wallet = wallet;
@@ -20,6 +22,7 @@ export class NetworkManager {
         this.knownPeers = new Set();
         this.walletConnections = new Set();
         this.blockchain = new Blockchain(difficulty);
+        this.mempool = new Mempool(this.blockchain);
         this.setupEventListeners();
     }
 
@@ -41,9 +44,12 @@ export class NetworkManager {
                 case 'TRANSACTION':
                     this.handleNewTransaction(message.payload.transaction, message.sender);
                     break;
+                case 'MEMPOOL_REQUEST':
+                    this.handleMempoolRequest(message.sender);
+                    break;
             }
         });
-
+    
         this.node.on('peerConnected', async ({ peerId, address }) => {
             const isWalletConnection = address.includes('localhost:0');
             
@@ -60,10 +66,10 @@ export class NetworkManager {
                         id: peerId,
                         address: address
                     };
-
+    
                     this.broadcastPeerDiscovery([newPeer]);
                 }
-
+    
                 this.requestChainFromPeer(peerId);
             }
             
@@ -72,7 +78,7 @@ export class NetworkManager {
                 console.log('Connected wallets:', Array.from(this.walletConnections));
             }
         });
-
+    
         this.node.on('peerDisconnected', ({ peerId }) => {
             if (this.walletConnections.has(peerId)) {
                 this.walletConnections.delete(peerId);
@@ -88,6 +94,29 @@ export class NetworkManager {
         });
     }
 
+    protected handleMempoolRequest(requesterId: string): void {
+        try {
+            // Get all current transactions from mempool
+            const transactions = this.mempool.getTransactions();
+            
+            // Create response message with all mempool transactions
+            const mempoolResponse: PeerMessage = {
+                type: 'MEMPOOL_RESPONSE',
+                payload: {
+                    transactions: transactions
+                },
+                sender: this.getNodeId(),
+                timestamp: Date.now()
+            };
+    
+            // Send response back to requesting peer
+            this.node.sendToPeer(requesterId, mempoolResponse);
+            console.log(`Sent mempool state to peer ${requesterId} with ${transactions.length} transactions`);
+        } catch (error) {
+            console.error('Error handling mempool request:', error);
+        }
+    }
+
     protected handleNewBlock(block: Block, sender: string): void {
         try {
             if (this.isValidNewBlock(block)) {
@@ -100,6 +129,10 @@ export class NetworkManager {
         } catch (error) {
             console.error('Error handling new block:', error);
         }
+    }
+
+    public getMempool(): Mempool {
+        return this.mempool;
     }
 
     protected isValidNewBlock(block: Block): boolean {
@@ -202,8 +235,8 @@ export class NetworkManager {
 
     protected handleNewTransaction(transaction: Transaction, sender: string): void {
         try {
-            if (this.blockchain.validateTransaction(transaction)) {
-                // Add to mempool (to be implemented)
+            if (this.mempool.addTransaction(transaction)) {
+                // Only broadcast if successfully added to mempool
                 this.broadcastTransaction(transaction, sender);
             }
         } catch (error) {

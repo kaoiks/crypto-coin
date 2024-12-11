@@ -1,0 +1,22 @@
+npm run dev start-node 3000
+
+npm run dev mining-node 4000 ./wallet.json mypassword 4 ws://localhost:3000
+
+	-jak wykopie jeden czy dwa bloki to można zatrzymać
+
+npm run dev check-balance ./wallet.json mypassword ws://localhost:3000
+
+	-zoabczy się hajs który jest na wallecie
+
+npm run dev send-transaction wallet.json mypassword ws://localhost:3000 wallet1.pub
+
+	-to wysyła hajs na klucz publiczny walletu1 w pliku jest kluczpubliczny walleta, który można podejrzeć:  npm run dev show-keys wallet1.json mypassword
+
+npm run dev view-mempool ws://localhost:3000
+
+	-tym sprawdza się ile jest transakcji w mempool
+
+
+do teraz działa dobrze wydaje mi się
+teraz problem jest aby przy kolejnym kopaniu bloków transakcje zostały zaciągniete i puszczone z mempool
+i żeby później transakcja przechodziła żeby zoabczyć ile na np. wallet1/wallet jest hajsu po transakcji
