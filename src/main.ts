@@ -300,6 +300,7 @@ async function main() {
                         chainSynced = true;
                         
                         const blockchain = networkManager.getBlockchain();
+                        console.log('KLUCZ', currentIdentity.getPublicKey())
                         const balance = blockchain.getAccountBalance(currentIdentity.getPublicKey());
                         
                         console.log('\nCurrent balance:', balance.confirmed, 'coins');
@@ -335,7 +336,6 @@ async function main() {
                                 if (answer.toLowerCase() === 'yes' || answer.toLowerCase() === 'y') {
                                     try {
                                         const transaction = wallet.createTransaction(recipientAddress, amount);
-                                
                                         const message: PeerMessage = {
                                             type: 'TRANSACTION',
                                             payload: { transaction },

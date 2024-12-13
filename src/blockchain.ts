@@ -171,6 +171,7 @@ export class Blockchain {
         }
     
         // Verify sender has sufficient balance
+        console.log('Sender is: ', transaction.sender)
         const senderBalance = this.getAccountBalance(transaction.sender);
         if (senderBalance.confirmed < transaction.amount) {
             console.log('Transaction validation failed: Insufficient balance');
@@ -225,12 +226,6 @@ export class Blockchain {
     public getAccountBalance(address: string): AccountBalance {
         console.log(`Calculating balance for address: ${address}`);
         
-        const existingBalance = this.balances.get(address);
-        if (existingBalance) {
-            console.log(`Found existing balance: ${JSON.stringify(existingBalance)}`);
-            return existingBalance;
-        }
-    
         // Initialize new account balance
         const newBalance: AccountBalance = {
             address,
@@ -240,30 +235,20 @@ export class Blockchain {
         };
     
         // Calculate balance from chain
-        console.log('Calculating balance from chain...');
-        let total = 0;
-        
         this.chain.forEach((block, index) => {
-            console.log(`Checking block ${index}`);
             block.transactions.forEach(transaction => {
                 if (transaction.isCoinbase && transaction.recipient === address) {
-                    console.log(`Found mining reward: +${transaction.amount}`);
-                    total += transaction.amount;
+                    newBalance.confirmed += transaction.amount;
                 }
                 else if (transaction.sender === address) {
-                    console.log(`Found outgoing transaction: -${transaction.amount}`);
-                    total -= transaction.amount;
+                    newBalance.confirmed -= transaction.amount;
                 }
                 else if (transaction.recipient === address) {
-                    console.log(`Found incoming transaction: +${transaction.amount}`);
-                    total += transaction.amount;
+                    newBalance.confirmed += transaction.amount;
                 }
             });
         });
     
-        newBalance.confirmed = total;
-        console.log(`Final calculated balance: ${total}`);
-        
         this.balances.set(address, newBalance);
         return newBalance;
     }

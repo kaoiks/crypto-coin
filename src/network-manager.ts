@@ -47,6 +47,12 @@ export class NetworkManager {
                 case 'MEMPOOL_REQUEST':
                     this.handleMempoolRequest(message.sender);
                     break;
+                case 'MEMPOOL_RESPONSE':
+                    const transactions: Transaction[] = message.payload.transactions;
+                    transactions.forEach(tx => {
+                        this.mempool.addTransaction(tx);
+                    });
+                    break;
             }
         });
     
@@ -72,6 +78,15 @@ export class NetworkManager {
     
                 this.requestChainFromPeer(peerId);
             }
+            
+            const mempoolRequest: PeerMessage = {
+                type: 'MEMPOOL_REQUEST',
+                payload: {},
+                sender: this.getNodeId(),
+                timestamp: Date.now()
+            };
+            
+            this.node.sendToPeer(peerId, mempoolRequest);
             
             console.log('Current peers:', this.getPeers());
             if (this.walletConnections.size > 0) {

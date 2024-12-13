@@ -128,7 +128,6 @@ export class DigitalWallet {
         if (!this.currentIdentity) {
             throw new Error('No active identity in wallet');
         }
-    
         const transaction: Transaction = {
             id: crypto.randomBytes(32).toString('hex'),
             sender: this.currentIdentity.getPublicKey(),

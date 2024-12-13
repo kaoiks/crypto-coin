@@ -127,6 +127,7 @@ export class MiningNode extends NetworkManager {
                 const coinbaseTransaction = this.createCoinbaseTransaction(blockIndex);
                 
                 // Get pending transactions from mempool
+                console.log("CO W MEMPOOLU: ", this.mempool.getTransactions(BLOCKCHAIN_CONSTANTS.MAX_TRANSACTIONS_PER_BLOCK - 1));
                 const pendingTransactions = this.mempool.getTransactions(BLOCKCHAIN_CONSTANTS.MAX_TRANSACTIONS_PER_BLOCK - 1);
                 
                 // Create new block with coinbase and pending transactions
@@ -146,7 +147,7 @@ export class MiningNode extends NetworkManager {
     
                 // Mine the block (calculate hash with correct nonce)
                 this.mineBlock(newBlock);
-    
+                console.log('Block mined:', newBlock);
                 // Validate the block before broadcasting
                 if (this.isValidNewBlock(newBlock)) {
                     // Add to our chain first
