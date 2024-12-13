@@ -10,6 +10,13 @@ export interface KeyPair {
     privateKey: string;
 }
 
+export interface AccountBalance {
+    address: string;
+    confirmed: number;
+    pending: number;
+    lastUpdated: number;
+}
+
 export interface Transaction {
     // Unique identifier for the transaction
     id: string;

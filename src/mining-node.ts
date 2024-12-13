@@ -1,5 +1,5 @@
 import { NetworkManager } from './network-manager';
-import { Block, Transaction, BLOCKCHAIN_CONSTANTS } from './types';
+import { Block, Transaction, BLOCKCHAIN_CONSTANTS, PeerMessage } from './types';
 import { DigitalWallet } from './wallet';
 import * as crypto from 'crypto';
 
@@ -113,10 +113,10 @@ export class MiningNode extends NetworkManager {
         if (this.isMining || !this.miningWallet) {
             return;
         }
-    
+
         this.isMining = true;
         console.log('Starting mining operations...');
-    
+
         this.miningInterval = setInterval(async () => {
             try {
                 const currentChain = this.blockchain.getChain();
@@ -144,10 +144,11 @@ export class MiningNode extends NetworkManager {
                     miner: currentIdentity.getPublicKey(),
                     reward: coinbaseTransaction.amount
                 };
-    
+
                 // Mine the block (calculate hash with correct nonce)
                 this.mineBlock(newBlock);
                 console.log('Block mined:', newBlock);
+
                 // Validate the block before broadcasting
                 if (this.isValidNewBlock(newBlock)) {
                     // Add to our chain first
@@ -156,8 +157,22 @@ export class MiningNode extends NetworkManager {
                     // Remove mined transactions from mempool
                     this.mempool.removeTransactions(pendingTransactions);
                     
-                    // Then broadcast
+                    // Broadcast new block
                     this.broadcastNewBlock(newBlock);
+
+                    // Broadcast mempool sync to remove mined transactions
+                    const mempoolSyncMessage: PeerMessage = {
+                        type: 'MEMPOOL_SYNC_RESPONSE',
+                        payload: {
+                            removedTransactions: pendingTransactions.map(tx => tx.id)
+                        },
+                        sender: this.getNodeId(),
+                        timestamp: Date.now()
+                    };
+                    
+                    // Use the protected broadcastMessage method instead of accessing node directly
+                    this.broadcastMessage(mempoolSyncMessage);
+                    
                     console.log(`Mined and broadcast new block: ${newBlock.hash}`);
                     console.log(`Mining reward: ${coinbaseTransaction.amount} coins`);
                     console.log('Current chain length:', this.blockchain.getChain().length);
@@ -169,6 +184,10 @@ export class MiningNode extends NetworkManager {
                 this.stopMining();
             }
         }, 10000); // Mine every 10 seconds
+    }
+    
+    protected broadcastMessage(message: PeerMessage): void {
+        this.getNode().broadcastMessage(message);
     }
 
     private mineBlock(block: Block): void {

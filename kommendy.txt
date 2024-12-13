@@ -1,3 +1,5 @@
+npm install --dev
+
 npm run dev start-node 3000
 
 npm run dev mining-node 4000 ./wallet.json mypassword 4 ws://localhost:3000

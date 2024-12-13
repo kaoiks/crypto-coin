@@ -158,26 +158,12 @@ export class Blockchain {
         // Verify basic transaction properties
         if (!transaction.sender || !transaction.recipient || transaction.amount <= 0) {
             console.log('Transaction validation failed: Invalid basic properties');
-            console.log('Sender:', transaction.sender ? 'present' : 'missing');
-            console.log('Recipient:', transaction.recipient ? 'present' : 'missing');
-            console.log('Amount:', transaction.amount);
             return false;
         }
     
         // Verify signature
         if (!this.verifyTransactionSignature(transaction)) {
             console.log('Transaction validation failed: Invalid signature');
-            return false;
-        }
-    
-        // Verify sender has sufficient balance
-        console.log('Sender is: ', transaction.sender)
-        const senderBalance = this.getAccountBalance(transaction.sender);
-        if (senderBalance.confirmed < transaction.amount) {
-            console.log('Transaction validation failed: Insufficient balance');
-            console.log('Required:', transaction.amount);
-            console.log('Available:', senderBalance.confirmed);
-            console.log('Sender address:', transaction.sender);
             return false;
         }
     
@@ -226,31 +212,51 @@ export class Blockchain {
     public getAccountBalance(address: string): AccountBalance {
         console.log(`Calculating balance for address: ${address}`);
         
-        // Initialize new account balance
-        const newBalance: AccountBalance = {
+        // Get or create balance object
+        let balance = this.balances.get(address) || {
             address,
             confirmed: 0,
             pending: 0,
             lastUpdated: Date.now()
         };
     
-        // Calculate balance from chain
-        this.chain.forEach((block, index) => {
+        // Calculate balance from entire chain
+        let runningBalance = 0;
+        this.chain.forEach(block => {
             block.transactions.forEach(transaction => {
-                if (transaction.isCoinbase && transaction.recipient === address) {
-                    newBalance.confirmed += transaction.amount;
+                if (transaction.sender === address) {
+                    runningBalance -= transaction.amount;
                 }
-                else if (transaction.sender === address) {
-                    newBalance.confirmed -= transaction.amount;
-                }
-                else if (transaction.recipient === address) {
-                    newBalance.confirmed += transaction.amount;
+                if (transaction.recipient === address) {
+                    runningBalance += transaction.amount;
                 }
             });
         });
     
-        this.balances.set(address, newBalance);
-        return newBalance;
+        balance.confirmed = runningBalance;
+        balance.lastUpdated = Date.now();
+        this.balances.set(address, balance);
+        
+        return balance;
+    }
+
+
+    public validateTransactionBalance(transaction: Transaction, balanceAtPoint: number): boolean {
+        if (transaction.isCoinbase) {
+            return true;
+        }
+    
+        if (!transaction.sender) {
+            return false;
+        }
+    
+        if (balanceAtPoint < transaction.amount) {
+            console.log('Insufficient balance for transaction:', transaction.id);
+            console.log('Required:', transaction.amount, 'Available:', balanceAtPoint);
+            return false;
+        }
+    
+        return true;
     }
 
     public getTransactionHistory(address: string): Transaction[] {
@@ -271,32 +277,91 @@ export class Blockchain {
         return this.transactionConfirmations.get(transactionId);
     }
 
-    public replaceChain(newChain: Block[]): void {
-        if (newChain.length <= this.chain.length) {
-            throw new Error('New chain must be longer than current chain');
-        }
+    // In blockchain.ts
+public replaceChain(newChain: Block[]): void {
+    if (newChain.length <= this.chain.length) {
+        throw new Error('New chain must be longer than current chain');
+    }
 
-        // Reset balances and confirmations
-        this.balances.clear();
-        this.transactionConfirmations.clear();
+    // Reset balances before chain replacement
+    this.balances.clear();
+    this.transactionConfirmations.clear();
 
-        // Verify the new chain
-        for (let i = 1; i < newChain.length; i++) {
-            if (!this.validateBlock(newChain[i], newChain[i-1])) {
-                throw new Error('Invalid block in new chain');
+    // Set genesis block
+    this.chain = [newChain[0]];
+    
+    // Initialize balances map with AccountBalance objects
+    const blockBalances = new Map<string, AccountBalance>();
+    
+    // Validate and add each block
+    for (let i = 1; i < newChain.length; i++) {
+        const block = newChain[i];
+        let isValid = true;
+
+        // Process block transactions to update balances
+        for (const tx of block.transactions) {
+            if (tx.isCoinbase) {
+                if (!this.validateCoinbaseTransaction(tx, block.index)) {
+                    isValid = false;
+                    break;
+                }
+                const recipientBalance = blockBalances.get(tx.recipient) || {
+                    address: tx.recipient,
+                    confirmed: 0,
+                    pending: 0,
+                    lastUpdated: Date.now()
+                };
+                recipientBalance.confirmed += tx.amount;
+                blockBalances.set(tx.recipient, recipientBalance);
+            } else {
+                if (!tx.sender) continue;
+                
+                const senderBalance = blockBalances.get(tx.sender) || {
+                    address: tx.sender,
+                    confirmed: 0,
+                    pending: 0,
+                    lastUpdated: Date.now()
+                };
+
+                if (senderBalance.confirmed < tx.amount) {
+                    isValid = false;
+                    break;
+                }
+
+                // Update sender balance
+                senderBalance.confirmed -= tx.amount;
+                blockBalances.set(tx.sender, senderBalance);
+
+                // Update recipient balance
+                const recipientBalance = blockBalances.get(tx.recipient) || {
+                    address: tx.recipient,
+                    confirmed: 0,
+                    pending: 0,
+                    lastUpdated: Date.now()
+                };
+                recipientBalance.confirmed += tx.amount;
+                blockBalances.set(tx.recipient, recipientBalance);
             }
         }
-
-        // Replace the chain and reprocess all transactions
-        this.chain = newChain;
         
-        // Reprocess all transactions in the new chain
-        this.chain.forEach(block => {
-            this.processBlockTransactions(block);
+        if (!isValid) {
+            throw new Error(`Invalid block at height ${block.index}`);
+        }
+        
+        // If block is valid, update chain and balances
+        this.chain.push(block);
+        blockBalances.forEach((balance, address) => {
+            this.balances.set(address, balance);
         });
-
-        console.log('Chain replaced and balances recalculated');
+        
+        // Update confirmations
+        block.transactions.forEach(tx => {
+            this.updateTransactionConfirmation(tx.id, block.index);
+        });
     }
+
+    console.log('Chain replaced and balances recalculated');
+}
 
     private validateBlock(block: Block, previousBlock: Block): boolean {
         if (block.previousHash !== previousBlock.hash) {

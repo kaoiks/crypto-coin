@@ -1,6 +1,6 @@
 import { DigitalWallet, WalletEvent } from './wallet';
 import { P2PNode } from './node';
-import { Block, PeerMessage, Transaction, BLOCKCHAIN_CONSTANTS } from './types';
+import { Block, PeerMessage, Transaction, BLOCKCHAIN_CONSTANTS, AccountBalance } from './types';
 import { Blockchain } from './blockchain';
 import { Mempool } from './mempool';
 import * as crypto from 'crypto';
@@ -27,34 +27,43 @@ export class NetworkManager {
     }
 
     protected setupEventListeners(): void {
-        this.node.on('message', (message: PeerMessage) => {
-            switch (message.type) {
-                case 'PEER_DISCOVERY':
-                    this.handlePeerDiscovery(message);
-                    break;
-                case 'BLOCK':
-                    this.handleNewBlock(message.payload.block, message.sender);
-                    break;
-                case 'CHAIN_REQUEST':
-                    this.handleChainRequest(message.sender);
-                    break;
-                case 'CHAIN_RESPONSE':
-                    this.handleChainResponse(message.payload.chain);
-                    break;
-                case 'TRANSACTION':
-                    this.handleNewTransaction(message.payload.transaction, message.sender);
-                    break;
-                case 'MEMPOOL_REQUEST':
-                    this.handleMempoolRequest(message.sender);
-                    break;
-                case 'MEMPOOL_RESPONSE':
-                    const transactions: Transaction[] = message.payload.transactions;
-                    transactions.forEach(tx => {
-                        this.mempool.addTransaction(tx);
+    this.node.on('message', (message: PeerMessage) => {
+        switch (message.type) {
+            case 'PEER_DISCOVERY':
+                this.handlePeerDiscovery(message);
+                break;
+            case 'BLOCK':
+                this.handleNewBlock(message.payload.block, message.sender);
+                break;
+            case 'CHAIN_REQUEST':
+                this.handleChainRequest(message.sender);
+                break;
+            case 'CHAIN_RESPONSE':
+                this.handleChainResponse(message.payload.chain);
+                break;
+            case 'TRANSACTION':
+                this.handleNewTransaction(message.payload.transaction, message.sender);
+                break;
+            case 'MEMPOOL_REQUEST':
+                this.handleMempoolRequest(message.sender);
+                break;
+            case 'MEMPOOL_RESPONSE':
+                const transactions: Transaction[] = message.payload.transactions;
+                transactions.forEach(tx => {
+                    this.mempool.addTransaction(tx);
+                });
+                break;
+            case 'MEMPOOL_SYNC_RESPONSE':
+                const removedTransactions: string[] = message.payload.removedTransactions;
+                if (Array.isArray(removedTransactions)) {
+                    removedTransactions.forEach(txId => {
+                        this.mempool.removeTransaction(txId);
+                        console.log(`Removed transaction ${txId} from mempool due to sync`);
                     });
-                    break;
-            }
-        });
+                }
+                break;
+        }
+    });
     
         this.node.on('peerConnected', async ({ peerId, address }) => {
             const isWalletConnection = address.includes('localhost:0');
@@ -213,38 +222,63 @@ export class NetworkManager {
             console.log('Block has no transactions array');
             return false;
         }
-
+    
         // Find coinbase transactions
         const coinbaseTransactions = block.transactions.filter(tx => tx.isCoinbase);
-
+    
         // Verify only one coinbase transaction exists
         if (coinbaseTransactions.length !== 1) {
             console.log(`Invalid number of coinbase transactions: ${coinbaseTransactions.length}`);
             return false;
         }
-
+    
         // Validate coinbase transaction
         const coinbase = coinbaseTransactions[0];
         if (!this.blockchain.validateCoinbaseTransaction(coinbase, block.index)) {
             console.log('Invalid coinbase transaction');
             return false;
         }
-
+    
         // Verify reward amount matches the coinbase amount
         if (block.reward !== coinbase.amount) {
             console.log(`Block reward mismatch. Block: ${block.reward}, Coinbase: ${coinbase.amount}`);
             return false;
         }
-
+    
+        // Calculate running balances for validation
+        const tempBalances = new Map<string, number>();
+        
+        // Initialize balances from previous blocks
+        for (let i = 0; i < this.blockchain.getChain().length; i++) {
+            const prevBlock = this.blockchain.getChain()[i];
+            prevBlock.transactions.forEach(tx => {
+                if (tx.sender) {
+                    const senderBal = tempBalances.get(tx.sender) || 0;
+                    tempBalances.set(tx.sender, senderBal - tx.amount);
+                }
+                const recipientBal = tempBalances.get(tx.recipient) || 0;
+                tempBalances.set(tx.recipient, recipientBal + tx.amount);
+            });
+        }
+    
         // Validate all other transactions
         const regularTransactions = block.transactions.filter(tx => !tx.isCoinbase);
         for (const transaction of regularTransactions) {
-            if (!this.blockchain.validateTransaction(transaction)) {
-                console.log(`Invalid transaction: ${transaction.id}`);
+            if (!transaction.sender) continue;
+            
+            const senderBalance = tempBalances.get(transaction.sender) || 0;
+            if (senderBalance < transaction.amount) {
+                console.log(`Insufficient balance for transaction: ${transaction.id}`);
+                console.log(`Required: ${transaction.amount}, Available: ${senderBalance}`);
                 return false;
             }
+            
+            // Update temporary balances
+            tempBalances.set(transaction.sender, senderBalance - transaction.amount);
+            const recipientBal = tempBalances.get(transaction.recipient) || 0;
+            tempBalances.set(transaction.recipient, recipientBal + transaction.amount);
         }
-
+    
         return true;
     }
 
@@ -290,32 +324,77 @@ export class NetworkManager {
             console.log('Invalid genesis block');
             return false;
         }
-
+    
+        // Track running balances for chain validation
+        const runningBalances = new Map<string, AccountBalance>();
+    
         // Validate each block in the chain
         for (let i = 1; i < chain.length; i++) {
             const currentBlock = chain[i];
             const previousBlock = chain[i - 1];
-
+    
             // Validate block linkage
             if (currentBlock.previousHash !== previousBlock.hash) {
                 console.log('Invalid chain continuity');
                 return false;
             }
-
+    
             // Validate proof of work
             const target = "0".repeat(this.blockchain.getDifficulty());
             if (!currentBlock.hash.startsWith(target)) {
                 console.log('Invalid proof of work in chain');
                 return false;
             }
-
-            // Validate block transactions
-            if (!this.validateBlockTransactions(currentBlock)) {
-                console.log('Invalid transactions in block');
-                return false;
+    
+            // Process transactions and update balances
+            for (const tx of currentBlock.transactions) {
+                if (tx.isCoinbase) {
+                    if (!this.blockchain.validateCoinbaseTransaction(tx, currentBlock.index)) {
+                        console.log('Invalid coinbase transaction in block', currentBlock.index);
+                        return false;
+                    }
+                    
+                    const recipientBalance = runningBalances.get(tx.recipient) || {
+                        address: tx.recipient,
+                        confirmed: 0,
+                        pending: 0,
+                        lastUpdated: Date.now()
+                    };
+                    recipientBalance.confirmed += tx.amount;
+                    runningBalances.set(tx.recipient, recipientBalance);
+                } else {
+                    if (!tx.sender) continue;
+                    
+                    const senderBalance = runningBalances.get(tx.sender) || {
+                        address: tx.sender,
+                        confirmed: 0,
+                        pending: 0,
+                        lastUpdated: Date.now()
+                    };
+    
+                    if (senderBalance.confirmed < tx.amount) {
+                        console.log(`Insufficient balance for transaction in block ${currentBlock.index}`);
+                        console.log(`Required: ${tx.amount}, Available: ${senderBalance.confirmed}`);
+                        console.log(`Sender: ${tx.sender}`);
+                        return false;
+                    }
+    
+                    // Update balances
+                    senderBalance.confirmed -= tx.amount;
+                    runningBalances.set(tx.sender, senderBalance);
+    
+                    const recipientBalance = runningBalances.get(tx.recipient) || {
+                        address: tx.recipient,
+                        confirmed: 0,
+                        pending: 0,
+                        lastUpdated: Date.now()
+                    };
+                    recipientBalance.confirmed += tx.amount;
+                    runningBalances.set(tx.recipient, recipientBalance);
+                }
             }
         }
-
+    
         return true;
     }
 
