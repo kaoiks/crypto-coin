@@ -268,12 +268,6 @@ async function main() {
                     process.exit(1);
                 }
         
-                // Create readline interface with visible input
-                const rl = readline.createInterface({
-                    input: process.stdin,
-                    output: process.stdout
-                });
-        
                 // Load the wallet
                 const wallet = new DigitalWallet(password, walletPath);
                 console.log(`\nLoaded wallet from ${walletPath}`);
@@ -295,18 +289,25 @@ async function main() {
                 
                 // Setup chain sync completion handler
                 let chainSynced = false;
+                let mempoolSynced = false;
+        
                 networkManager.getNode().on('message', async (message: PeerMessage) => {
                     if (message.type === 'CHAIN_RESPONSE' && !chainSynced) {
                         chainSynced = true;
                         
                         const blockchain = networkManager.getBlockchain();
-                        console.log('KLUCZ', currentIdentity.getPublicKey())
                         const balance = blockchain.getAccountBalance(currentIdentity.getPublicKey());
                         
                         console.log('\nCurrent balance:', balance.confirmed, 'coins');
                         if (balance.pending > 0) {
                             console.log('Pending balance:', balance.pending, 'coins');
                         }
+        
+                        // Create readline interface here, after chain sync
+                        const rl = readline.createInterface({
+                            input: process.stdin,
+                            output: process.stdout
+                        });
         
                         rl.question('\nEnter amount to send: ', async (amountStr) => {
                             const amount = parseFloat(amountStr);
@@ -325,7 +326,6 @@ async function main() {
                                 process.exit(1);
                             }
         
-                            // Show confirmation prompt with transaction details
                             console.log('\nTransaction Details:');
                             console.log('-------------------');
                             console.log('From:   ', currentIdentity.getPublicKey());
@@ -346,10 +346,13 @@ async function main() {
                                         networkManager.getNode().broadcastMessage(message);
                                         console.log(`\nTransaction ${transaction.id} sent to network`);
                                         
-                                        // Cleanup and exit
-                                        networkManager.stop();
-                                        rl.close();
-                                        process.exit(0);
+                                        // Wait briefly for mempool sync before closing
+                                        setTimeout(() => {
+                                            networkManager.stop();
+                                            rl.close();
+                                            process.exit(0);
+                                        }, 1000);
+                                        
                                     } catch (error) {
                                         console.error('Error sending transaction:', error);
                                         networkManager.stop();
@@ -365,6 +368,11 @@ async function main() {
                             });
                         });
                     }
+                    
+                    // Add handling for mempool messages
+                    if (message.type === 'MEMPOOL_RESPONSE' || message.type === 'MEMPOOL_SYNC_RESPONSE') {
+                        mempoolSynced = true;
+                    }
                 });
         
                 // Connect to node and request chain
@@ -377,17 +385,16 @@ async function main() {
                     if (!chainSynced) {
                         console.error('Timeout waiting for blockchain sync');
                         networkManager.stop();
-                        rl.close();
                         process.exit(1);
                     }
-                }, 10000); // 10 second timeout
+                }, 10000);
         
             } catch (error) {
                 console.error('Error setting up transaction:', error);
                 process.exit(1);
             }
         }
-        // In main.ts, modify the view-mempool command handler:
+  
 
         else if (command === 'view-mempool') {
             const nodeAddress = process.argv[3];
@@ -512,6 +519,7 @@ async function main() {
         console.error('Error:', error);
         process.exit(1);
     }
+    
 }
 
 main().catch(console.error);

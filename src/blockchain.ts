@@ -150,24 +150,33 @@ export class Blockchain {
     }
 
     public validateTransaction(transaction: Transaction): boolean {
-        // Skip additional validation for coinbase transactions
         if (transaction.isCoinbase) {
             return true;
         }
     
-        // Verify basic transaction properties
         if (!transaction.sender || !transaction.recipient || transaction.amount <= 0) {
             console.log('Transaction validation failed: Invalid basic properties');
             return false;
         }
     
-        // Verify signature
-        if (!this.verifyTransactionSignature(transaction)) {
-            console.log('Transaction validation failed: Invalid signature');
+        // Check if recipient's public key is in valid format
+        if (!transaction.recipient.includes('-----BEGIN PUBLIC KEY-----') || 
+            !transaction.recipient.includes('-----END PUBLIC KEY-----')) {
+            console.log('Transaction validation failed: Invalid recipient format');
             return false;
         }
     
-        return true;
+        // Verify sender has sufficient balance
+        const senderBalance = this.getAccountBalance(transaction.sender);
+        if (senderBalance.confirmed < transaction.amount) {
+            console.log('Transaction validation failed: Insufficient balance');
+            console.log('Required:', transaction.amount);
+            console.log('Available:', senderBalance.confirmed);
+            return false;
+        }
+    
+        // Verify signature
+        return this.verifyTransactionSignature(transaction);
     }
     
 
@@ -209,37 +218,50 @@ export class Blockchain {
         }
     }
 
-    public getAccountBalance(address: string): AccountBalance {
-        console.log(`Calculating balance for address: ${address}`);
-        
-        // Get or create balance object
-        let balance = this.balances.get(address) || {
-            address,
-            confirmed: 0,
-            pending: 0,
-            lastUpdated: Date.now()
-        };
+   // Modify getAccountBalance to use the normalized keys
+public getAccountBalance(address: string): AccountBalance {
+    console.log(`Calculating balance for address: ${address}`);
     
-        // Calculate balance from entire chain
-        let runningBalance = 0;
-        this.chain.forEach(block => {
-            block.transactions.forEach(transaction => {
-                if (transaction.sender === address) {
-                    runningBalance -= transaction.amount;
-                }
-                if (transaction.recipient === address) {
-                    runningBalance += transaction.amount;
-                }
-            });
-        });
-    
-        balance.confirmed = runningBalance;
-        balance.lastUpdated = Date.now();
-        this.balances.set(address, balance);
-        
-        return balance;
-    }
+    // Initialize new account balance or get existing
+    const normalizedAddress = this.normalizePublicKey(address);
+    let balance = this.balances.get(normalizedAddress) || {
+        address: normalizedAddress,
+        confirmed: 0,
+        pending: 0,
+        lastUpdated: Date.now()
+    };
 
+    // Reset confirmed balance before recalculating
+    balance.confirmed = 0;
+
+    // Calculate balance by traversing the entire chain
+    this.chain.forEach((block) => {
+        block.transactions.forEach(transaction => {
+            const normalizedSender = transaction.sender ? this.normalizePublicKey(transaction.sender) : null;
+            const normalizedRecipient = this.normalizePublicKey(transaction.recipient);
+            
+            // Handle amounts sent
+            if (normalizedSender === normalizedAddress) {
+                balance.confirmed -= transaction.amount;
+            }
+            // Handle amounts received
+            if (normalizedRecipient === normalizedAddress) {
+                balance.confirmed += transaction.amount;
+                console.log(`Added ${transaction.amount} to ${address} from transaction ${transaction.id}`);
+            }
+        });
+    });
+
+    console.log(`Final balance for ${address}: ${balance.confirmed}`);
+    
+    // Update stored balance
+    this.balances.set(normalizedAddress, balance);
+    return balance;
+}
+
+private normalizePublicKey(key: string): string {
+    return key.replace(/\r\n/g, '\n').trim();
+}
 
     public validateTransactionBalance(transaction: Transaction, balanceAtPoint: number): boolean {
         if (transaction.isCoinbase) {
