@@ -11,7 +11,8 @@ export class MiningNode extends NetworkManager {
     
 
     constructor(difficulty: number = 4) {
-        super(undefined, difficulty, true); // Pass true for isMiningNode
+        // Pass isMiningNode flag to NetworkManager
+        super(undefined, difficulty, true);
         this.currentMiningBlock = null;
         this.isMining = false;
         this.miningInterval = null;
@@ -68,52 +69,7 @@ export class MiningNode extends NetworkManager {
         return coinbaseTransaction;
     }
 
-    // Override to add mining-specific behavior
-    protected override handleNewBlock(block: Block, sender: string): void {
-        console.log(`Mining node received new block from peer ${sender}: ${block.hash}`);
-        console.log(`Received block height: ${block.index}. Our current height: ${this.blockchain.getChain().length}`);
-        
-        try {
-            const currentChain = this.blockchain.getChain();
-            const lastBlock = currentChain[currentChain.length - 1];
-
-            // Case 1: Block builds on our current chain
-            if (block.previousHash === lastBlock.hash) {
-                if (this.isValidNewBlock(block)) {
-                    // Stop current mining operation
-                    if (this.isMining) {
-                        this.stopMining();
-                    }
-
-                    // Add block to chain
-                    this.blockchain.getChain().push(block);
-                    console.log(`Added new block from peer. New chain height: ${this.blockchain.getChain().length}`);
-                    
-                    // Remove mined transactions from mempool
-                    const minedTxIds = new Set(block.transactions.map(tx => tx.id));
-                    Array.from(this.mempool.getTransactions()).forEach(tx => {
-                        if (minedTxIds.has(tx.id)) {
-                            this.mempool.removeTransaction(tx.id);
-                        }
-                    });
-
-                    // Broadcast the block to other peers
-                    this.broadcastNewBlock(block, sender);
-                    
-                    // Reset current mining block since chain height changed
-                    this.currentMiningBlock = null;
-                    
-                    // Restart mining for next block
-                    if (this.miningWallet) {
-                        this.startMining();
-                    }
-                }
-            } 
-            // ... rest of the cases remain the same ...
-        } catch (error) {
-            console.error('Error handling new block:', error);
-        }
-    }
+    
 
     public override async start(port: number): Promise<void> {
         await super.start(port);
@@ -126,7 +82,7 @@ export class MiningNode extends NetworkManager {
         }
     }
 
-     public startMining(): void {
+    public startMining(): void {
         if (this.isMining || !this.miningWallet) {
             return;
         }
@@ -221,6 +177,25 @@ export class MiningNode extends NetworkManager {
         return this.miningWallet?.getCurrentIdentity()?.getPublicKey() || null;
     }
 
+    
+
+    private tryMineBlock(block: Block): boolean {
+        const target = "0".repeat(this.blockchain.getDifficulty());
+        const MAX_NONCE_ATTEMPTS = 1000; // Limit attempts per interval
+        
+        for (let i = 0; i < MAX_NONCE_ATTEMPTS; i++) {
+            block.hash = this.calculateBlockHash(block);
+            if (block.hash.substring(0, this.blockchain.getDifficulty()) === target) {
+                return true;
+            }
+            block.nonce++;
+        }
+        return false;
+    }
+
+    
+
+
 
     private prepareNewBlock(): void {
         const currentChain = this.blockchain.getChain();
@@ -252,22 +227,8 @@ export class MiningNode extends NetworkManager {
             reward: coinbaseTransaction.amount
         };
     }
-
-    protected tryMineBlock(block: Block): boolean {
-        const target = "0".repeat(this.blockchain.getDifficulty());
-        const MAX_NONCE_ATTEMPTS = 1000; // Limit attempts per interval
-        
-        for (let i = 0; i < MAX_NONCE_ATTEMPTS; i++) {
-            block.hash = this.calculateBlockHash(block);
-            if (block.hash.substring(0, this.blockchain.getDifficulty()) === target) {
-                return true;
-            }
-            block.nonce++;
-        }
-        return false;
-    }
-
-    protected handleMinedBlock(block: Block): void {
+    
+    private handleMinedBlock(block: Block): void {
         // Validate one final time before broadcasting
         if (this.isValidNewBlock(block)) {
             // Add to our chain
@@ -287,7 +248,52 @@ export class MiningNode extends NetworkManager {
             console.log(`Successfully mined block at height ${block.index}. New chain height: ${this.blockchain.getChain().length}`);
         }
     }
+    
+    protected override handleNewBlock(block: Block, sender: string): void {
+        console.log(`Mining node received new block from peer ${sender}: ${block.hash}`);
+        console.log(`Received block height: ${block.index}. Our current height: ${this.blockchain.getChain().length}`);
+        
+        try {
+            const currentChain = this.blockchain.getChain();
+            const lastBlock = currentChain[currentChain.length - 1];
 
+            // Case 1: Block builds on our current chain
+            if (block.previousHash === lastBlock.hash) {
+                if (this.isValidNewBlock(block)) {
+                    // Stop current mining operation
+                    if (this.isMining) {
+                        this.stopMining();
+                    }
+
+                    // Add block to chain
+                    this.blockchain.getChain().push(block);
+                    console.log(`Added new block from peer. New chain height: ${this.blockchain.getChain().length}`);
+                    
+                    // Remove mined transactions from mempool
+                    const minedTxIds = new Set(block.transactions.map(tx => tx.id));
+                    Array.from(this.mempool.getTransactions()).forEach(tx => {
+                        if (minedTxIds.has(tx.id)) {
+                            this.mempool.removeTransaction(tx.id);
+                        }
+                    });
+
+                    // Broadcast the block to other peers
+                    this.broadcastNewBlock(block, sender);
+                    
+                    // Reset current mining block since chain height changed
+                    this.currentMiningBlock = null;
+                    
+                    // Restart mining for next block
+                    if (this.miningWallet) {
+                        this.startMining();
+                    }
+                }
+            } 
+            // ... rest of the cases remain the same ...
+        } catch (error) {
+            console.error('Error handling new block:', error);
+        }
+    }
 
 
 }

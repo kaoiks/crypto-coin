@@ -24,4 +24,3 @@ export class SecureStorage {
         return new StoredIdentity(data.id, keyPair, data.name);
     }
 }
-

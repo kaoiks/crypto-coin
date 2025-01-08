@@ -11,7 +11,6 @@ interface MiningCapable {
     stopMining(): void;
 }
 
-
 export class NetworkManager {
     private wallet?: DigitalWallet;
     private node: P2PNode;
@@ -22,10 +21,11 @@ export class NetworkManager {
     protected mempool: Mempool;
     protected readonly isMiningNode: boolean;
 
+
     constructor(wallet?: DigitalWallet, difficulty: number = 4, isMiningNode: boolean = false) {
         this.wallet = wallet;
         this.isWalletNode = !!wallet;
-        this.isMiningNode = isMiningNode; // Set before setupEventListeners
+        this.isMiningNode = isMiningNode;
         const nodeId = wallet ? wallet.getWalletId() : crypto.randomBytes(16).toString('hex');
         this.node = new P2PNode(nodeId);
         this.knownPeers = new Set();
@@ -155,40 +155,44 @@ export class NetworkManager {
             const currentChain = this.blockchain.getChain();
             const lastBlock = currentChain[currentChain.length - 1];
     
-            // If we receive a block from a longer chain, request the full chain
-            if (block.index > lastBlock.index) {
-                console.log(`Received block from potentially longer chain. Our height: ${lastBlock.index}, Received height: ${block.index}`);
+            // Case 1: Block builds on our current chain
+            if (block.previousHash === lastBlock.hash) {
+                if (this.isValidNewBlock(block)) {
+                    // Stop current mining operation if we're a mining node
+                    if (this.isMiningNode && (this as any as MiningCapable).stopMining) {
+                        (this as any as MiningCapable).stopMining();
+                    }
+    
+                    this.blockchain.getChain().push(block);
+                    console.log(`Added new block from peer: ${block.hash}`);
+    
+                    // Remove mined transactions from mempool
+                    const minedTxIds = new Set(block.transactions.map(tx => tx.id));
+                    Array.from(this.mempool.getTransactions()).forEach(tx => {
+                        if (minedTxIds.has(tx.id)) {
+                            this.mempool.removeTransaction(tx.id);
+                        }
+                    });
+    
+                    // Forward the block to other peers
+                    this.broadcastNewBlock(block, sender);
+    
+                    // If we're a mining node, start mining the next block
+                    if (this.isMiningNode && (this as any as MiningCapable).startMining) {
+                        (this as any as MiningCapable).startMining();
+                    }
+                }
+            } 
+            // Case 2: Block is competing at same height
+            else if (block.index === lastBlock.index + 1) {
+                console.log(`Received competing block at height ${block.index}`);
+            }
+            // Case 3: Block is ahead of our chain
+            else if (block.index > lastBlock.index + 1) {
                 this.requestChainFromPeer(sender);
-                return;
             }
         } catch (error) {
             console.error('Error handling new block:', error);
-        }
-    }
-
-    private addNewBlock(block: Block, sender: string): void {
-        // Stop current mining operation if we're a mining node
-        if (this.isMiningNode && (this as any as MiningCapable).stopMining) {
-            (this as any as MiningCapable).stopMining();
-        }
-    
-        this.blockchain.getChain().push(block);
-        console.log(`Added new block from peer: ${block.hash}`);
-    
-        // Remove mined transactions from mempool
-        const minedTxIds = new Set(block.transactions.map(tx => tx.id));
-        Array.from(this.mempool.getTransactions()).forEach(tx => {
-            if (minedTxIds.has(tx.id)) {
-                this.mempool.removeTransaction(tx.id);
-            }
-        });
-    
-        // Forward the block to other peers
-        this.broadcastNewBlock(block, sender);
-    
-        // If we're a mining node, start mining the next block
-        if (this.isMiningNode && (this as any as MiningCapable).startMining) {
-            (this as any as MiningCapable).startMining();
         }
     }
 
@@ -200,19 +204,19 @@ export class NetworkManager {
         const chain = this.blockchain.getChain();
         const lastBlock = chain[chain.length - 1];
         const MAX_TIME_DRIFT = 2 * 60 * 60 * 1000; // 2 hours in milliseconds
-        const now = Date.now();
-       
+    const now = Date.now();
+        
+        // Basic block validation
+        // Changed duplicate check to look at index and previousHash instead of just hash
+        if (block.index === lastBlock.index) {
+            console.log('Block with this index already exists');
+            return false;
+        }
         if (block.timestamp > now + MAX_TIME_DRIFT) {
             console.log('Block timestamp too far in future');
             return false;
         }
 
-
-        if (block.index === lastBlock.index) {
-            console.log('Block with this index already exists');
-            return false;
-        }
-    
         if (block.index !== lastBlock.index + 1) {
             console.log(`Invalid block index. Expected ${lastBlock.index + 1} but got ${block.index}`);
             return false;
@@ -352,34 +356,9 @@ export class NetworkManager {
 
     protected handleChainResponse(receivedChain: Block[]): void {
         try {
-            const currentChain = this.blockchain.getChain();
-            console.log(`Comparing chains - Current length: ${currentChain.length}, Received length: ${receivedChain.length}`);
-    
-            // If received chain is longer, validate and switch to it
-            if (receivedChain.length > currentChain.length) {
-                console.log('Received longer chain - validating...');
-                
-                if (this.isValidChain(receivedChain)) {
-                    console.log(`Switching to longer chain (length ${receivedChain.length})`);
-                    
-                    // Stop mining if we're a mining node
-                    if (this.isMiningNode && (this as any as MiningCapable).stopMining) {
-                        (this as any as MiningCapable).stopMining();
-                    }
-    
-                    // Replace chain and clear mempool
-                    this.blockchain.replaceChain(receivedChain);
-                    this.mempool.clear();
-    
-                    // Restart mining on new chain if we're a mining node
-                    if (this.isMiningNode && (this as any as MiningCapable).startMining) {
-                        (this as any as MiningCapable).startMining();
-                    }
-                } else {
-                    console.log('Received chain is invalid, keeping current chain');
-                }
-            } else {
-                console.log('Received chain is not longer than current chain, ignoring');
+            if (this.isValidChain(receivedChain) && this.shouldReplaceChain(receivedChain)) {
+                console.log('Received valid longer chain. Replacing current chain...');
+                this.blockchain.replaceChain(receivedChain);
             }
         } catch (error) {
             console.error('Error handling chain response:', error);
@@ -466,41 +445,10 @@ export class NetworkManager {
         return true;
     }
 
+    // Rest of the existing methods...
     protected shouldReplaceChain(newChain: Block[]): boolean {
-        const currentChain = this.blockchain.getChain();
-        
-        // If new chain is longer
-        if (newChain.length > currentChain.length) {
-            return true;
-        }
-        
-        // If same length, compare total work
-        if (newChain.length === currentChain.length) {
-            const currentWork = this.calculateChainWork(currentChain);
-            const newWork = this.calculateChainWork(newChain);
-            return newWork > currentWork;
-        }
-        
-        return false;
+        return newChain.length > this.blockchain.getChain().length;
     }
-
-
-    private calculateChainWork(chain: Block[]): bigint {
-        return chain.reduce((totalWork, block) => {
-            // Calculate target based on block's hash requirement
-            // For a difficulty of N, target would be 2^(256-N)
-            const difficulty = this.blockchain.getDifficulty();
-            
-            // Use BigInt for precise calculations with large numbers
-            // 2^256 / difficulty target gives us the work required
-            // The higher the difficulty, the more work needed
-            const work = BigInt(2) ** BigInt(256) / (BigInt(2) ** BigInt(256 - difficulty));
-            
-            // Add this block's work to total
-            return totalWork + work;
-        }, BigInt(0));
-    }
-    
 
     protected broadcastNewBlock(block: Block, originalSender?: string): void {
         const blockMessage: PeerMessage = {
