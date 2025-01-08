@@ -5,6 +5,7 @@ import { Transaction, PeerMessage, TransactionStatus } from './types';
 import * as readline from 'readline';
 import { DigitalWallet, WalletEvent } from "./wallet";
 import * as crypto from 'crypto';
+// import { SelfishMiningNode } from './selfish-mining-node';
 import * as fs from 'fs';
 
 async function main() {
@@ -85,6 +86,46 @@ async function main() {
                 process.exit(0);
             });
         }
+        // else if (command === 'selfish-mining-node') {
+        //     const port = parseInt(process.argv[3]);
+        //     const walletPath = process.argv[4];
+        //     const password = process.argv[5];
+        //     const difficulty = parseInt(process.argv[6]) || 4;
+        //     const peerAddress = process.argv[7];
+            
+        //     if (!port || !walletPath || !password || !peerAddress) {
+        //         console.error('Usage: npm run dev selfish-mining-node <port> <wallet-path> <password> [difficulty] <peer-address>');
+        //         process.exit(1);
+        //     }
+        
+        //     try {
+        //         // Load the wallet
+        //         const wallet = new DigitalWallet(password, walletPath);
+        //         console.log(`Loaded mining wallet from ${walletPath}`);
+        //         console.log(`Mining rewards will go to: ${wallet.getCurrentIdentity()?.getPublicKey()}`);
+        
+        //         // Create and start selfish mining node
+        //         const miningNode = new SelfishMiningNode(difficulty);
+        //         await miningNode.start(port);
+                
+        //         // Connect the wallet for mining rewards
+        //         miningNode.connectMiningWallet(wallet);
+                
+        //         // Connect to the network
+        //         await miningNode.connectToPeer(peerAddress);
+        //         console.log(`Connected to peer at ${peerAddress}`);
+                
+        //         process.on('SIGINT', () => {
+        //             console.log('Shutting down selfish mining node...');
+        //             miningNode.stop();
+        //             process.exit(0);
+        //         });
+        
+        //     } catch (error) {
+        //         console.error('Error running selfish mining node:', error);
+        //         process.exit(1);
+        //     }
+        // }
         else if (command === 'mining-node') {
             const port = parseInt(process.argv[3]);
             const walletPath = process.argv[4];

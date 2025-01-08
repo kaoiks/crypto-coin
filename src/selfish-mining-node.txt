@@ -1,0 +1,80 @@
+import { MiningNode } from './mining-node';
+import { Block } from './types';
+
+export class SelfishMiningNode extends MiningNode {
+    private blocksMined: number = 0;
+    private readonly targetBlocks: number = 3;
+    private initialChainLength: number = 0;
+    private readonly slowdownFactor: number = 3; // Will make mining 5 times slower
+
+    constructor(difficulty: number = 4) {
+        super(difficulty);
+    }
+
+    protected override tryMineBlock(block: Block): boolean {
+        const target = "0".repeat(this.blockchain.getDifficulty());
+        const MAX_NONCE_ATTEMPTS = 1000; // Reduced from 1000 to make mining slower
+        
+        // Add artificial delay to make mining slower
+        for (let delay = 0; delay < this.slowdownFactor * 1000000; delay++) {
+            // Just waste some CPU cycles
+            Math.random() * Math.random();
+        }
+        
+        for (let i = 0; i < MAX_NONCE_ATTEMPTS; i++) {
+            block.hash = this.calculateBlockHash(block);
+            if (block.hash.substring(0, this.blockchain.getDifficulty()) === target) {
+                return true;
+            }
+            block.nonce++;
+        }
+        return false;
+    }
+
+    protected override handleNewBlock(block: Block, sender: string): void {
+        // During our selfish mining period, ignore incoming blocks
+        if (this.blocksMined < this.targetBlocks) {
+            console.log(`Ignoring incoming block while selfish mining. Our blocks mined: ${this.blocksMined}/${this.targetBlocks}`);
+            console.log(`Note: Mining slower than regular nodes, fork likely to be discarded`);
+            return;
+        }
+
+        // After we're done with selfish mining, handle blocks normally
+        super.handleNewBlock(block, sender);
+    }
+
+    public override async start(port: number): Promise<void> {
+        await super.start(port);
+        console.log(`Selfish mining node started on port ${port} (Mining at ${this.slowdownFactor}x slower speed)`);
+        this.initialChainLength = this.blockchain.getChain().length;
+        console.log(`Initial chain length: ${this.initialChainLength}. Will mine ${this.targetBlocks} blocks in isolation.`);
+    }
+
+    protected override handleMinedBlock(block: Block): void {
+        if (this.blocksMined < this.targetBlocks) {
+            // Just add to our chain without broadcasting
+            if (this.isValidNewBlock(block)) {
+                this.blockchain.getChain().push(block);
+                this.blocksMined++;
+                console.log(`Mined block ${this.blocksMined}/${this.targetBlocks} in isolation. Height: ${block.index}`);
+                console.log(`Mining slower: Regular nodes likely ${this.slowdownFactor}x blocks ahead`);
+
+                // If we've mined all our target blocks, broadcast the entire fork
+                if (this.blocksMined === this.targetBlocks) {
+                    console.log('Finished selfish mining! Broadcasting our fork...');
+                    const ourChain = this.blockchain.getChain();
+                    const fork = ourChain.slice(this.initialChainLength);
+                    
+                    // Broadcast our fork blocks in order
+                    fork.forEach(block => {
+                        this.broadcastNewBlock(block);
+                        console.log(`Broadcasting fork block at height ${block.index}`);
+                    });
+                }
+            }
+        } else {
+            // After we're done with selfish mining, handle blocks normally
+            super.handleMinedBlock(block);
+        }
+    }
+}
