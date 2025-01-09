@@ -181,7 +181,7 @@ export class MiningNode extends NetworkManager {
 
     private tryMineBlock(block: Block): boolean {
         const target = "0".repeat(this.blockchain.getDifficulty());
-        const MAX_NONCE_ATTEMPTS = 1000; // Limit attempts per interval
+        const MAX_NONCE_ATTEMPTS = 5000; // Limit attempts per interval
         
         for (let i = 0; i < MAX_NONCE_ATTEMPTS; i++) {
             block.hash = this.calculateBlockHash(block);
