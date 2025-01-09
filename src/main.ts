@@ -463,6 +463,58 @@ async function main() {
                 process.exit(1);
             }
         }
+        else if (command === 'connect-nodes') {
+            const port = parseInt(process.argv[3]);
+            const firstNodePort = parseInt(process.argv[4]);
+            const secondNodePort = parseInt(process.argv[5]);
+            
+            if (!port || !firstNodePort || !secondNodePort) {
+                console.error('Usage: npm run dev connect-nodes <port> <first-node-port> <second-node-port>');
+                process.exit(1);
+            }
+        
+            try {
+                const networkManager = new NetworkManager();
+                await networkManager.start(port);
+                console.log(`Connector node started on port ${port}`);
+        
+                // Connect to both nodes
+                console.log(`Connecting to first node on port ${firstNodePort}...`);
+                await networkManager.connectToPeer(`ws://localhost:${firstNodePort}`);
+                
+                console.log(`Connecting to second node on port ${secondNodePort}...`);
+                await networkManager.connectToPeer(`ws://localhost:${secondNodePort}`);
+        
+                // Create peer discovery message
+                const peerDiscoveryMessage: PeerMessage = {
+                    type: 'PEER_DISCOVERY',
+                    payload: {
+                        peers: [
+                            { id: `node-${firstNodePort}`, address: `ws://localhost:${firstNodePort}` },
+                            { id: `node-${secondNodePort}`, address: `ws://localhost:${secondNodePort}` }
+                        ]
+                    },
+                    sender: networkManager.getNodeId(),
+                    timestamp: Date.now()
+                };
+        
+                // Broadcast the discovery message to both connected nodes
+                networkManager.getNode().broadcastMessage(peerDiscoveryMessage);
+                console.log('Broadcasted peer information to connected nodes');
+        
+                // Wait a moment then shut down
+                setTimeout(() => {
+                    console.log('Connector node shutting down...');
+                    networkManager.stop();
+                    process.exit(0);
+                }, 1000);
+        
+            } catch (err) {
+                const error = err as Error;
+                console.error('Error:', error.message);
+                process.exit(1);
+            }
+        }
         
         else if (command === 'show-keys') {
             const walletPath = process.argv[3];
@@ -506,6 +558,7 @@ async function main() {
             console.error('Usage:');
             console.error('  Create wallet:         npm run dev create-wallet <password> <wallet-path>');
             console.error('  Start node:            npm run dev start-node <port> [peer-address]');
+            console.error('  Connect two nodes:      npm run dev connect-nodes <port> <first-node-port> <second-node-port>');
             console.error('  Connect wallet:         npm run dev connect-wallet <wallet-path> <password> <node-address>');
             console.error('  Start mining node:      npm run dev mining-node <port> <wallet-path> <password> [difficulty] [peer-address]');
             console.error('  Connect mining wallet:   npm run dev connect-mining-wallet <node-port> <wallet-path> <password>');
