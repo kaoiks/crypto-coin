@@ -47,6 +47,9 @@ export class NetworkManager {
             case 'CHAIN_REQUEST':
                 this.handleChainRequest(message.sender);
                 break;
+                case 'DROP_CONNECTIONS':
+                    this.handleDropConnections();
+                    break;
             case 'CHAIN_RESPONSE':
                 this.handleChainResponse(message.payload.chain);
                 break;
@@ -126,7 +129,45 @@ export class NetworkManager {
             }
         });
     }
+    protected handleDropConnections(): void {
+        console.log('Received drop connections command');
+        
+        // Get all peers including wallet connections
+        const allPeers = [...this.getPeers(), ...this.getConnectedWallets()];
+        console.log(`Dropping all connections (${allPeers.length} peers)...`);
+        
+        // Force disconnect all peers
+        allPeers.forEach(peerId => {
+            this.node.disconnectPeer(peerId);
+        });
+        
+        // Clear all peer tracking
+        this.knownPeers.clear();
+        this.walletConnections.clear();
+        
+        // Force clear all node connections
+        this.node.clearConnections();
+        
+        console.log('All connections dropped');
+    }
 
+    
+
+    public dropAllConnections(): void {
+        const peers = this.getPeers();
+        console.log(`Dropping connections to ${peers.length} peers...`);
+        
+        // Get all peer IDs before clearing them
+        const peerIds = [...this.knownPeers];
+        
+        // Clear the known peers set
+        this.knownPeers.clear();
+        
+        // Clear peer connections but keep the node running
+        this.node.clearConnections();
+        
+        console.log('All peer connections dropped, node remains active');
+    }
     protected handleMempoolRequest(requesterId: string): void {
         try {
             // Get all current transactions from mempool

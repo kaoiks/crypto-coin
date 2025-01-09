@@ -1,7 +1,8 @@
 export interface PeerMessage {
     type: 'TRANSACTION' | 'BLOCK' | 'PEER_DISCOVERY' | 'CHAIN_REQUEST' | 
           'CHAIN_RESPONSE' | 'MEMPOOL_REQUEST' | 'MEMPOOL_RESPONSE' | 
-          'MEMPOOL_SYNC_REQUEST' | 'MEMPOOL_SYNC_RESPONSE' | 'DISCONNECT_REQUEST';
+          'MEMPOOL_SYNC_REQUEST' | 'MEMPOOL_SYNC_RESPONSE' | 'DROP_CONNECTIONS' |
+          'PEER_DISCONNECT';
     payload: any;
     sender: string;
     timestamp: number;

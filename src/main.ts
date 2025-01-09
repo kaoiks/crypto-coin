@@ -515,6 +515,53 @@ async function main() {
                 process.exit(1);
             }
         }
+        else if (command === 'drop-connections') {
+            const targetPort = parseInt(process.argv[3]);
+            
+            if (!targetPort) {
+                console.error('Usage: npm run dev drop-connections <target-port>');
+                process.exit(1);
+            }
+        
+            const networkManager = new NetworkManager();
+            
+            try {
+                // Start our network manager on a random port
+                await networkManager.start(0);
+                
+                // Create a drop connections message
+                const dropMessage: PeerMessage = {
+                    type: 'DROP_CONNECTIONS',
+                    payload: {},
+                    sender: networkManager.getNodeId(),
+                    timestamp: Date.now()
+                };
+        
+                // Connect to target node
+                console.log(`Connecting to node on port ${targetPort}...`);
+                await networkManager.connectToPeer(`ws://localhost:${targetPort}`);
+                
+                // Wait for connection to establish
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Send the drop message
+                networkManager.getNode().broadcastMessage(dropMessage);
+                console.log(`Sent drop connections command to node on port ${targetPort}`);
+                
+                // Wait long enough for the target node to process the command
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Clean exit
+                networkManager.stop();
+                process.exit(0);
+        
+            } catch (err) {
+                const error = err as Error;
+                console.error('Error:', error.message);
+                networkManager.stop();
+                process.exit(1);
+            }
+        }
         
         else if (command === 'show-keys') {
             const walletPath = process.argv[3];

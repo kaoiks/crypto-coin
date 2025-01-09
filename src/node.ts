@@ -212,4 +212,32 @@ export class P2PNode extends EventEmitter {
             address: info.address
         }));
     }
+
+    public clearConnections(): void {
+        // Force close all WebSocket connections
+        this.peers.forEach((peerInfo, peerId) => {
+            try {
+                peerInfo.socket.close();
+                this.emit('peerDisconnected', { peerId });
+                console.log(`Closed connection to peer ${peerId}`);
+            } catch (error) {
+                console.error(`Error closing connection to peer ${peerId}:`, error);
+            }
+        });
+        
+        // Clear the peers map
+        this.peers.clear();
+    }
+
+    
+
+    public disconnectPeer(peerId: string): void {
+        const peerInfo = this.peers.get(peerId);
+        if (peerInfo) {
+            peerInfo.socket.close();
+            this.peers.delete(peerId);
+            this.emit('peerDisconnected', { peerId });
+            console.log(`Disconnected from peer ${peerId}`);
+        }
+    }
 }
