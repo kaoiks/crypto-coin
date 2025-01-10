@@ -1,6 +1,6 @@
 import { DigitalWallet, WalletEvent } from './wallet';
 import { P2PNode } from './node';
-import { Block, PeerMessage, Transaction, BLOCKCHAIN_CONSTANTS, AccountBalance } from './types';
+import { Block, PeerMessage, Transaction, BLOCKCHAIN_CONSTANTS, AccountBalance, OrphanBlock } from './types';
 import { Blockchain } from './blockchain';
 import { Mempool } from './mempool';
 import * as crypto from 'crypto';
@@ -20,8 +20,9 @@ export class NetworkManager {
     protected blockchain: Blockchain;
     protected mempool: Mempool;
     protected readonly isMiningNode: boolean;
-
-
+    private orphanBlocks: Map<string, OrphanBlock> = new Map();
+    private orphanCleanupInterval?: NodeJS.Timeout;
+    
     constructor(wallet?: DigitalWallet, difficulty: number = 4, isMiningNode: boolean = false) {
         this.wallet = wallet;
         this.isWalletNode = !!wallet;
@@ -33,6 +34,7 @@ export class NetworkManager {
         this.blockchain = new Blockchain(difficulty);
         this.mempool = new Mempool(this.blockchain);
         this.setupEventListeners();
+        this.startOrphanCleanupSchedule();
     }
 
     protected setupEventListeners(): void {
@@ -195,7 +197,19 @@ export class NetworkManager {
         try {
             const currentChain = this.blockchain.getChain();
             const lastBlock = currentChain[currentChain.length - 1];
-    
+            
+            const parentExistsInChain = currentChain.some(b => b.hash === block.previousHash);
+            if (!parentExistsInChain) {
+                // We don't know the parent block yet, so store this block as orphan
+                console.log(`Parent block not found for block ${block.hash} (prevHash = ${block.previousHash}). Storing as orphan.`);
+                this.addOrphanBlock(block);
+                
+                // Optionally request chain from the sender, in hopes of receiving the missing block
+                this.requestChainFromPeer(sender);
+                return;
+            }
+
+            
             // Case 1: Block builds on our current chain
             if (block.previousHash === lastBlock.hash) {
                 if (this.isValidNewBlock(block)) {
@@ -218,12 +232,15 @@ export class NetworkManager {
                     // Forward the block to other peers
                     this.broadcastNewBlock(block, sender);
     
+                    // Attempt to process any orphan blocks that might now have a valid parent
+                    this.processOrphanBlocks();
+    
                     // If we're a mining node, start mining the next block
                     if (this.isMiningNode && (this as any as MiningCapable).startMining) {
                         (this as any as MiningCapable).startMining();
                     }
                 }
-            } 
+            }
             // Case 2: Block is competing at same height
             else if (block.index === lastBlock.index + 1) {
                 console.log(`Received competing block at height ${block.index}`);
@@ -236,6 +253,63 @@ export class NetworkManager {
             console.error('Error handling new block:', error);
         }
     }
+
+    // Store orphan blocks in a map
+    private addOrphanBlock(block: Block): void {
+        const orphanBlock: OrphanBlock = {
+            ...block,
+            receivedAt: Date.now(),
+            attempts: 0
+        };
+        this.orphanBlocks.set(block.hash, orphanBlock);
+    }
+
+    private processOrphanBlocks(): void {
+        let attachedAnyBlock = true;
+    
+        // Repeat until no more orphan blocks can be attached
+        while (attachedAnyBlock) {
+            attachedAnyBlock = false;
+    
+            const currentOrphans = Array.from(this.orphanBlocks.values());
+    
+            for (const orphan of currentOrphans) {
+                const parentExistsInChain = this.blockchain
+                    .getChain()
+                    .some(block => block.hash === orphan.previousHash);
+    
+                if (parentExistsInChain) {
+                    console.log(`Found parent for orphan block ${orphan.hash}. Attempting to add it to the chain...`);
+                    // Remove it from the orphan pool
+                    this.orphanBlocks.delete(orphan.hash);
+                    this.handleNewBlock(orphan, orphan.miner);
+    
+                    attachedAnyBlock = true;
+                }
+            }
+        }
+    }
+    
+    private startOrphanCleanupSchedule(): void {
+        const TEN_MINUTES = 10 * 60 * 1000; // 10 minutes in milliseconds
+    
+        this.orphanCleanupInterval = setInterval(() => {
+            this.cleanupOrphanBlocks();
+        }, TEN_MINUTES);
+    }
+
+    private cleanupOrphanBlocks(): void {
+        const now = Date.now();
+        const THIRTY_MINUTES = 30 * 60 * 1000;
+    
+        for (const [hash, orphan] of this.orphanBlocks) {
+            if ((now - orphan.receivedAt) > THIRTY_MINUTES || orphan.attempts >= 10) {
+                console.log(`Purging stale orphan block ${hash}`);
+                this.orphanBlocks.delete(hash);
+            }
+        }
+    }
+    
 
     public getMempool(): Mempool {
         return this.mempool;
@@ -594,6 +668,10 @@ export class NetworkManager {
         this.node.stop();
         this.knownPeers.clear();
         this.walletConnections.clear();
+        if (this.orphanCleanupInterval) {
+            clearInterval(this.orphanCleanupInterval);
+            this.orphanCleanupInterval = undefined;
+        }
     }
 
     public isWalletConnected(): boolean {

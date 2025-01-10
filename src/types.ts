@@ -123,3 +123,8 @@ export interface MempoolTransaction extends Transaction {
     // List of peers this transaction was received from
     receivedFrom: string[];
 }
+
+export interface OrphanBlock extends Block {
+    receivedAt: number;
+    attempts: number;
+}
