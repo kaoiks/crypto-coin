@@ -31,3 +31,4 @@ yarn-error.log*
 wallet_*.json
 wallet_*.json.enc
 wallet_*.json.enc.*
+wallet*.json
